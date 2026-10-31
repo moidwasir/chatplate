@@ -47,3 +47,4 @@ RUN pnpm prisma generate
 EXPOSE 3001
 ENV NODE_ENV=production
 CMD ["node", "dist/main"]
+

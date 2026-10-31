@@ -88,3 +88,4 @@ export type SocketEvent =
   | TicketCreatedEvent
   | RiderLocationEvent
   | KdsHeartbeatEvent;
+

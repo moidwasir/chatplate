@@ -21,3 +21,4 @@ export class MenuController {
     return this.menuService.toggleSoldOut(id, body.soldOut, branchId);
   }
 }
+

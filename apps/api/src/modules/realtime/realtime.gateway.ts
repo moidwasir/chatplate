@@ -16,7 +16,7 @@ import type { SocketEvent } from '@safi/types';
   namespace: '/',
 })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer() server: Server;
+  @WebSocketServer() server!: Server;
   private readonly logger = new Logger(RealtimeGateway.name);
 
   handleConnection(client: Socket) {
@@ -75,3 +75,4 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     return { ack: true };
   }
 }
+

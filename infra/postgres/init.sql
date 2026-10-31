@@ -9,3 +9,4 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- Log
 SELECT 'Safi Restaurant DB initialized' AS status;
+

@@ -36,3 +36,4 @@ apps/api/prisma/migrations/*.bak
 
 # OS
 Thumbs.db
+

@@ -91,3 +91,4 @@ export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.CANCELLED]: [OrderStatus.REFUNDED],
   [OrderStatus.REFUNDED]: [],
 };
+

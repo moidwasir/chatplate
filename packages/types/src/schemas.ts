@@ -108,3 +108,4 @@ export type Cart = z.infer<typeof CartSchema>;
 export type PricingBreakdown = z.infer<typeof PricingBreakdownSchema>;
 export type CreateOrder = z.infer<typeof CreateOrderSchema>;
 export type WhatsAppLocation = z.infer<typeof WhatsAppLocationSchema>;
+

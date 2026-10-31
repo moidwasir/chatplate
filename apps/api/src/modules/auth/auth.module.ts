@@ -4,3 +4,4 @@ import { Module } from '@nestjs/common';
 // Full implementation: Phase 1.4
 @Module({})
 export class AuthModule {}
+

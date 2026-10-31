@@ -99,3 +99,4 @@ export class OrdersService {
     return `ORD-${String(count + 1).padStart(6, '0')}`;
   }
 }
+

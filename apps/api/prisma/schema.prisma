@@ -698,3 +698,4 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId, createdAt])
 }
+

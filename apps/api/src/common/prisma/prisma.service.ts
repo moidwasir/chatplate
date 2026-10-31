@@ -21,3 +21,4 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.logger.log('Database disconnected');
   }
 }
+

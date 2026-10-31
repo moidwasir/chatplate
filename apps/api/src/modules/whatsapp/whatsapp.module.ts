@@ -12,3 +12,4 @@ import { WhatsAppService, WHATSAPP_QUEUE } from './whatsapp.service';
   exports: [WhatsAppService],
 })
 export class WhatsAppModule {}
+
