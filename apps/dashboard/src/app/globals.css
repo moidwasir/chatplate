@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-brand: #16a34a; /* green-600 — adjust to restaurant brand color */
+}

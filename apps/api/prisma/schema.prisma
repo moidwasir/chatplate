@@ -1,0 +1,700 @@
+// Safi Restaurant System — Prisma Schema
+// PostgreSQL 16 | All money in paisa (integer) — 1 PKR = 100 paisa
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESTAURANT & BRANCHES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Restaurant {
+  id          String   @id @default(uuid())
+  name        String
+  logoUrl     String?
+  taxPercent  Int      @default(0) // e.g. 1700 = 17%
+  currency    String   @default("PKR")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branches Branch[]
+}
+
+model Branch {
+  id           String   @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  name         String
+  address      String
+  phone        String
+  lat          Float?
+  lng          Float?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  openingHours    OpeningHour[]
+  deliveryZones   DeliveryZone[]
+  categories      Category[]
+  orders          Order[]
+  riders          Rider[]
+  stations        Station[]
+  users           UserBranchAccess[]
+  cashShifts      CashShift[]
+  conversations   Conversation[]
+
+  @@index([restaurantId])
+}
+
+model OpeningHour {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  dayOfWeek Int      // 0=Sun, 1=Mon, ... 6=Sat
+  openTime  String   // "HH:MM"
+  closeTime String   // "HH:MM"
+  isClosed  Boolean  @default(false)
+
+  @@unique([branchId, dayOfWeek])
+}
+
+model DeliveryZone {
+  id          String          @id @default(uuid())
+  branchId    String
+  branch      Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name        String
+  polygon     Json            // GeoJSON polygon [[[lng,lat],...]]
+  feeType     DeliveryFeeType
+  flatFee     Int?            // paisa
+  perKmFee    Int?            // paisa per km
+  freeAbove   Int?            // paisa basket value for free delivery
+  minOrder    Int             @default(0) // paisa
+  maxDistance Float?          // km
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  @@index([branchId])
+}
+
+enum DeliveryFeeType {
+  FLAT
+  PER_KM
+  FREE_ABOVE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MENU
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Category {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  nameUrdu  String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items Item[]
+
+  @@index([branchId, isActive])
+}
+
+model Item {
+  id           String    @id @default(uuid())
+  categoryId   String
+  category     Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name         String
+  nameUrdu     String?
+  description  String?
+  price        Int       // paisa
+  imageUrl     String?
+  stationId    String?
+  station      Station?  @relation(fields: [stationId], references: [id])
+  isSoldOut    Boolean   @default(false)
+  isActive     Boolean   @default(true)
+  servingStart String?   // "HH:MM" — null means always available
+  servingEnd   String?   // "HH:MM"
+  sortOrder    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  modifierGroups ModifierGroup[]
+  orderItems     OrderItem[]
+
+  @@index([categoryId, isActive, isSoldOut])
+}
+
+model ModifierGroup {
+  id         String   @id @default(uuid())
+  itemId     String
+  item       Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name       String
+  nameUrdu   String?
+  required   Boolean  @default(false)
+  minChoices Int      @default(0)
+  maxChoices Int      @default(1)
+  sortOrder  Int      @default(0)
+
+  modifiers Modifier[]
+
+  @@index([itemId])
+}
+
+model Modifier {
+  id              String        @id @default(uuid())
+  groupId         String
+  group           ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name            String
+  nameUrdu        String?
+  priceAdjustment Int           @default(0) // paisa
+  isAvailable     Boolean       @default(true)
+  sortOrder       Int           @default(0)
+
+  orderItemModifiers OrderItemModifier[]
+
+  @@index([groupId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id            String    @id @default(uuid())
+  phone         String    @unique // WhatsApp number with country code
+  name          String?
+  language      Language  @default(EN)
+  isBlocked     Boolean   @default(false)
+  optedInPromos Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  addresses     Address[]
+  notes         CustomerNote[]
+  orders        Order[]
+  conversations Conversation[]
+  reviews       Review[]
+
+  @@index([phone])
+}
+
+enum Language {
+  EN
+  UR
+  UR_ROMAN
+}
+
+model Address {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String   // "Home", "Office", etc.
+  lat        Float
+  lng        Float
+  address    String   // Reverse-geocoded address
+  houseNo    String?
+  landmark   String?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  orders Order[]
+
+  @@index([customerId])
+}
+
+model CustomerNote {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  note       String
+  createdBy  String   // userId
+  createdAt  DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHAT / WHATSAPP
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id              String             @id @default(uuid())
+  customerId      String
+  customer        Customer           @relation(fields: [customerId], references: [id])
+  branchId        String
+  branch          Branch             @relation(fields: [branchId], references: [id])
+  state           ConversationState  @default(GREETING)
+  cartData        Json?              // serialized cart (Redis backup)
+  handledBy       HandledBy          @default(BOT)
+  assignedUserId  String?
+  lastMessageAt   DateTime           @default(now())
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  messages Message[]
+
+  @@index([customerId])
+  @@index([branchId, state])
+}
+
+enum ConversationState {
+  GREETING
+  ORDER_TYPE
+  MENU_CATEGORY
+  MENU_ITEM
+  ITEM_DETAIL
+  CART
+  ADDRESS
+  TIP
+  PAYMENT
+  CONFIRMED
+  HUMAN_HANDOVER
+}
+
+enum HandledBy {
+  BOT
+  HUMAN
+}
+
+model Message {
+  id             String          @id @default(uuid())
+  conversationId String
+  conversation   Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  waMessageId    String          @unique // Meta message_id — ensures idempotency
+  direction      MessageDirection
+  type           String          // text, interactive, location, template, etc.
+  content        Json            // full message payload
+  status         String?         // sent, delivered, read, failed
+  createdAt      DateTime        @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([waMessageId])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model WhatsAppTemplate {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  language     String   @default("en")
+  category     String   // MARKETING, UTILITY, AUTHENTICATION
+  status       String   // APPROVED, PENDING, REJECTED
+  components   Json     // template component definitions
+  metaTemplateId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(uuid())
+  orderNumber     String      @unique // e.g. "ORD-001234"
+  branchId        String
+  branch          Branch      @relation(fields: [branchId], references: [id])
+  customerId      String
+  customer        Customer    @relation(fields: [customerId], references: [id])
+  source          OrderSource
+  orderType       OrderType
+  status          OrderStatus @default(NEW)
+
+  // Address for delivery
+  addressId       String?
+  address         Address?    @relation(fields: [addressId], references: [id])
+
+  // Money (all in paisa)
+  subtotal        Int
+  taxAmount       Int         @default(0)
+  deliveryFee     Int         @default(0)
+  discountAmount  Int         @default(0)
+  tip             Int         @default(0) // NOT part of revenue or tax
+  total           Int
+
+  // Promo
+  promoCodeId     String?
+  promoCode       PromoCode?  @relation(fields: [promoCodeId], references: [id])
+
+  notes           String?
+  estimatedMinutes Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  items           OrderItem[]
+  statusHistory   OrderStatusHistory[]
+  payment         Payment?
+  delivery        Delivery?
+  kitchenTickets  KitchenTicket[]
+  review          Review?
+
+  @@index([branchId, status, createdAt])
+  @@index([customerId])
+  @@index([orderNumber])
+}
+
+enum OrderSource {
+  WHATSAPP
+  POS
+  PHONE
+  DINE_IN
+}
+
+enum OrderType {
+  DELIVERY
+  PICKUP
+  DINE_IN
+}
+
+enum OrderStatus {
+  NEW
+  ACCEPTED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  PICKED_UP
+  CANCELLED
+  REFUNDED
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId  String
+  menuItem    Item     @relation(fields: [menuItemId], references: [id])
+  // Price snapshot — never changes even if menu is later edited
+  name        String
+  unitPrice   Int      // paisa at time of order
+  quantity    Int
+  lineTotal   Int      // (unitPrice + modifiersTotal) * quantity
+  notes       String?
+
+  modifiers OrderItemModifier[]
+
+  @@index([orderId])
+}
+
+model OrderItemModifier {
+  id          String    @id @default(uuid())
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  modifierId  String
+  modifier    Modifier  @relation(fields: [modifierId], references: [id])
+  // Snapshot
+  name        String
+  priceAdjustment Int
+
+  @@index([orderItemId])
+}
+
+model OrderStatusHistory {
+  id         String      @id @default(uuid())
+  orderId    String
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  reason     String?
+  changedBy  String?     // userId or 'system' or 'customer'
+  createdAt  DateTime    @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  order       Order         @relation(fields: [orderId], references: [id])
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  amount      Int           // paisa
+  gatewayRef  String?       @unique // external provider reference — idempotency
+  paymentLink String?
+  linkExpiresAt DateTime?
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  refunds Refund[]
+
+  @@index([orderId])
+  @@index([gatewayRef])
+}
+
+enum PaymentMethod {
+  COD
+  JAZZCASH
+  EASYPAISA
+  CARD
+  COUNTER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+model Refund {
+  id        String   @id @default(uuid())
+  paymentId String
+  payment   Payment  @relation(fields: [paymentId], references: [id])
+  amount    Int      // paisa
+  reason    String?
+  issuedBy  String   // userId
+  createdAt DateTime @default(now())
+}
+
+model CashShift {
+  id           String    @id @default(uuid())
+  branchId     String
+  branch       Branch    @relation(fields: [branchId], references: [id])
+  cashierId    String
+  cashier      User      @relation(fields: [cashierId], references: [id])
+  openingFloat Int       // paisa counted at start
+  closingFloat Int?      // paisa counted at end
+  cashIn       Int       @default(0)
+  cashOut      Int       @default(0)
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+
+  @@index([branchId, openedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELIVERY
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Rider {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  name      String
+  phone     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  deliveries Delivery[]
+
+  @@index([branchId, isActive])
+}
+
+model Delivery {
+  id            String    @id @default(uuid())
+  orderId       String    @unique
+  order         Order     @relation(fields: [orderId], references: [id])
+  riderId       String?
+  rider         Rider?    @relation(fields: [riderId], references: [id])
+  assignedAt    DateTime?
+  pickedAt      DateTime?
+  deliveredAt   DateTime?
+  cashCollected Int?      // paisa
+  tipCollected  Int?      // paisa
+  proofUrl      String?   // photo proof of delivery
+  lat           Float?    // last known rider location
+  lng           Float?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([riderId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KITCHEN
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Station {
+  id       String @id @default(uuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+  name     String // "Grill", "Fry", "Bar", "Dessert"
+  color    String @default("#3B82F6")
+
+  items          Item[]
+  kitchenTickets KitchenTicket[]
+
+  @@unique([branchId, name])
+}
+
+model KitchenTicket {
+  id          String    @id @default(uuid())
+  orderId     String
+  order       Order     @relation(fields: [orderId], references: [id])
+  stationId   String
+  station     Station   @relation(fields: [stationId], references: [id])
+  items       Json      // snapshot of items for this station
+  firedAt     DateTime  @default(now())
+  startedAt   DateTime?
+  readyAt     DateTime?
+  bumpedAt    DateTime?
+  bumpedBy    String?   // userId
+
+  @@index([orderId])
+  @@index([stationId, firedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVENTORY / STOCK
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Ingredient {
+  id           String   @id @default(uuid())
+  branchId     String
+  name         String
+  unit         String   // "kg", "litre", "piece"
+  quantity     Float    @default(0)
+  reorderLevel Float    @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  recipes        Recipe[]
+  stockMovements StockMovement[]
+
+  @@index([branchId])
+}
+
+model Recipe {
+  id           String     @id @default(uuid())
+  itemId       String
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  quantity     Float      // per unit of item sold
+
+  @@unique([itemId, ingredientId])
+}
+
+model StockMovement {
+  id           String     @id @default(uuid())
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  type         StockMovementType
+  quantity     Float
+  reason       String?
+  createdBy    String?
+  createdAt    DateTime   @default(now())
+
+  @@index([ingredientId, createdAt])
+}
+
+enum StockMovementType {
+  SALE
+  PURCHASE
+  WASTAGE
+  ADJUSTMENT
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKETING
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  description     String?
+  discountType    DiscountType
+  discountValue   Int       // paisa (flat) or percent (e.g. 1000 = 10%)
+  minOrder        Int       @default(0) // paisa
+  maxUses         Int?
+  usedCount       Int       @default(0)
+  perCustomerMax  Int       @default(1)
+  isActive        Boolean   @default(true)
+  validFrom       DateTime  @default(now())
+  validUntil      DateTime?
+  createdAt       DateTime  @default(now())
+
+  orders Order[]
+
+  @@index([code, isActive])
+}
+
+enum DiscountType {
+  FLAT
+  PERCENT
+  FREE_DELIVERY
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  orderId    String   @unique
+  order      Order    @relation(fields: [orderId], references: [id])
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  rating     Int      // 1–5
+  comment    String?
+  tipAfter   Int      @default(0) // paisa — post-delivery tip from review message
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAFF / AUTH / AUDIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  email        String?   @unique
+  phone        String?   @unique
+  name         String
+  passwordHash String?   // for manager/owner email login
+  pinHash      String?   // for POS PIN login
+  role         UserRole
+  isActive     Boolean   @default(true)
+  twoFaSecret  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  branchAccess UserBranchAccess[]
+  cashShifts   CashShift[]
+  auditLogs    AuditLog[]
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  CASHIER
+  KITCHEN
+  RIDER
+}
+
+model UserBranchAccess {
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  entity     String   // "Order", "Item", "Payment", etc.
+  entityId   String
+  action     String   // "STATUS_CHANGE", "PRICE_EDIT", "REFUND", etc.
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+}

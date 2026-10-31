@@ -1,0 +1,32 @@
+{
+  "name": "safi-restaurant-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WhatsApp Restaurant Ordering System — Safi F&B",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @safi/api prisma migrate dev",
+    "db:generate": "pnpm --filter @safi/api prisma generate",
+    "db:seed": "pnpm --filter @safi/api prisma db seed",
+    "db:studio": "pnpm --filter @safi/api prisma studio",
+    "docker:up": "docker compose -f infra/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infra/docker-compose.yml down",
+    "docker:logs": "docker compose -f infra/docker-compose.yml logs -f"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
+    "prettier": "^3.4.0",
+    "eslint": "^9.15.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@11.22.0"
+}
