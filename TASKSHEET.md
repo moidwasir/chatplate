@@ -93,6 +93,7 @@
 | 49 | Fix: stuck at "Where should we deliver?"; typed text now gets help + Pickup / Cart / New order | ✅ |
 | 50 | "menu" after a break shows the menu (not "Continue?"); "cart clear" / "new order" / "cart" / "where are you" work anywhere | ✅ |
 | 51 | Square (1:1) photos on cards | ✅ |
+| 52 | Edit cart: remove one / remove a line / add one, by buttons or typing ("remove 2", "kheer hatao") | ✅ |
 
 ---
 

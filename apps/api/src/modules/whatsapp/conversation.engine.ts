@@ -233,10 +233,14 @@ export class ConversationEngine {
 
     // Commands that work from any step, even after a long break or mid-question
     const text = input.text && !input.id ? input.text : '';
-    if (input.id === 'cart_clear' || input.id === 'order_new' || (text && CLEAR_CART_TEXT.test(text))) {
-      return this.startNewOrder(phone, s);
-    }
+    if (input.id === 'cart_clear' || input.id === 'order_new') return this.startNewOrder(phone, s);
     if (text && VIEW_CART_TEXT.test(text)) return this.showCart(phone, s);
+    // Editing the cart: "✏️ Edit cart", a line, remove one / all / add one, or "remove 2" / "remove lassi"
+    if (input.id === 'cart_edit') return this.sendCartEditor(phone, s);
+    const lineAction = input.id?.match(/^(cline|cminus|crm|cplus)_(\d+)_(.+)$/);
+    if (lineAction) return this.editCartLine(phone, s, lineAction[1], Number(lineAction[2]), lineAction[3]);
+    if (text && s.cart.length > 0 && (await this.removeByText(phone, s, text))) return;
+    if (text && CLEAR_CART_TEXT.test(text)) return this.startNewOrder(phone, s);
     if (text && WHERE_ARE_YOU_TEXT.test(text)) return this.sendRestaurantLocation(phone, s);
     const wantsMenu = input.id === 'menu_full' || (!!text && FULL_MENU_TEXT.test(text));
 
@@ -1085,7 +1089,8 @@ export class ConversationEngine {
     const cartText =
       `🛒 *Your Cart*\n\n` +
       cartLines(s.cart).join('\n') +
-      `\n\n────────────────\n*Subtotal: PKR ${pkr(cartSubtotal(s.cart))}*`;
+      `\n\n────────────────\n*Subtotal: PKR ${pkr(cartSubtotal(s.cart))}*` +
+      `\n\n✏️ To remove something, tap *Edit cart* or type e.g. *remove ${s.cart.length > 1 ? 2 : 1}*.`;
 
     await this.send(
       phone,
@@ -1093,7 +1098,7 @@ export class ConversationEngine {
       buildButtons(phone, cartText, [
         { id: 'cart_checkout', title: '✅ Checkout' },
         { id: 'cart_add', title: '➕ Add More' },
-        { id: 'cart_clear', title: '🗑️ Clear Cart' },
+        { id: 'cart_edit', title: '✏️ Edit cart' },
       ]),
     );
   }
@@ -1412,6 +1417,136 @@ export class ConversationEngine {
     await this.save(phone, s);
     await this.setHandledBy(s, 'HUMAN');
     await this.send(phone, s, buildText(phone, '👤 Connecting you to our staff... Someone will be with you shortly!\n\nWant to order instead? Type *menu* anytime.'));
+  }
+
+  /** List of cart lines to change, plus "clear everything" */
+  private async sendCartEditor(phone: string, s: WaSession): Promise<void> {
+    if (s.cart.length === 0) return this.showCart(phone, s);
+    s.state = ConversationState.CART;
+    await this.save(phone, s);
+    const rows = s.cart.slice(0, 8).map((item, i) => ({
+      id: `cline_${i}_${item.menuItemId}`,
+      title: truncate(`${i + 1}. ${item.name}`, 24),
+      description: truncate(
+        `${item.quantity} × PKR ${pkr(unitTotal(item))} = PKR ${pkr(unitTotal(item) * item.quantity)}${item.selectedModifiers.length ? ` · ${item.selectedModifiers.map((m) => m.name).join(', ')}` : ''}`,
+        72,
+      ),
+    }));
+    await this.send(
+      phone,
+      s,
+      buildList(
+        phone,
+        '✏️ Which item do you want to change? You can remove one, remove it completely or add one more.',
+        [
+          { title: 'Your items', rows },
+          {
+            title: 'Other',
+            rows: [
+              { id: 'cart_view', title: '⬅️ Back to cart', description: '' },
+              { id: 'cart_clear', title: '🗑️ Clear whole cart', description: 'Remove everything and start again' },
+            ],
+          },
+        ],
+        'Choose item',
+      ),
+    );
+  }
+
+  /** cline = show choices for a line; cminus = one less; crm = remove the line; cplus = one more */
+  private async editCartLine(phone: string, s: WaSession, action: string, index: number, menuItemId: string): Promise<void> {
+    const item = s.cart[index];
+    // The cart changed since that message was sent
+    if (!item || item.menuItemId !== menuItemId) {
+      await this.send(phone, s, buildText(phone, '🔄 Your cart has changed, here it is again.'));
+      return this.showCart(phone, s);
+    }
+    const label = `${item.name}${item.selectedModifiers.length ? ` (${item.selectedModifiers.map((m) => m.name).join(', ')})` : ''}`;
+
+    if (action === 'cline') {
+      s.state = ConversationState.CART;
+      await this.save(phone, s);
+      const key = `${index}_${item.menuItemId}`;
+      const buttons =
+        item.quantity > 1
+          ? [
+              { id: `cminus_${key}`, title: '➖ Remove one' },
+              { id: `crm_${key}`, title: `🗑️ Remove all ${item.quantity}` },
+              { id: 'cart_view', title: '⬅️ Back to cart' },
+            ]
+          : [
+              { id: `crm_${key}`, title: '🗑️ Remove it' },
+              { id: `cplus_${key}`, title: '➕ One more' },
+              { id: 'cart_view', title: '⬅️ Back to cart' },
+            ];
+      await this.send(
+        phone,
+        s,
+        buildButtons(phone, `*${item.quantity} × ${label}*\nPKR ${pkr(unitTotal(item) * item.quantity)}`, buttons),
+      );
+      return;
+    }
+
+    if (action === 'cplus') {
+      item.quantity = Math.min(MAX_QUANTITY, item.quantity + 1);
+      await this.send(phone, s, buildText(phone, `➕ Now ${item.quantity} × ${label}.`));
+    } else if (action === 'cminus' && item.quantity > 1) {
+      item.quantity -= 1;
+      await this.send(phone, s, buildText(phone, `➖ Removed one. Now ${item.quantity} × ${label}.`));
+    } else {
+      s.cart.splice(index, 1);
+      await this.send(phone, s, buildText(phone, `🗑️ Removed ${item.quantity} × ${label} from your cart.`));
+    }
+    // Totals/fees were worked out for the old cart
+    s.deliveryFeePaisa = undefined;
+    s.deliveryAddressId = undefined;
+    return this.showCart(phone, s);
+  }
+
+  /**
+   * Typed removal: "remove 2" (line 2), "remove lassi", "remove 1 burger", "lassi hatao".
+   * Returns false when the text isn't a removal or names nothing in the cart.
+   */
+  private async removeByText(phone: string, s: WaSession, text: string): Promise<boolean> {
+    const m =
+      text.match(/^(?:remove|delete|minus|take out|cancel|hatao|hata do|nikalo|nikal do)\s+(.+)$/) ??
+      text.match(/^(.+?)\s+(?:hatao|hata do|nikalo|nikal do|remove karo|remove|delete)$/);
+    if (!m) return false;
+    let target = m[1].replace(/\b(from|my|the|cart|basket|order|please|plz|se|ko)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!target) return false;
+
+    // "remove 2" → line 2; "remove 1 burger" → one burger
+    if (/^\d{1,2}$/.test(target)) {
+      const i = Number(target) - 1;
+      if (!s.cart[i]) return false;
+      await this.editCartLine(phone, s, 'crm', i, s.cart[i].menuItemId);
+      return true;
+    }
+    let howMany: number | null = null;
+    const qty = target.match(/^(\d{1,2}|one|ek)\s+(.+)$/);
+    if (qty) {
+      howMany = /^\d/.test(qty[1]) ? Number(qty[1]) : 1;
+      target = qty[2];
+    }
+    const words = target.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+    if (words.length === 0) return false;
+    const singular = (w: string) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w);
+    const score = (name: string) =>
+      words.filter((w) => name.toLowerCase().split(/[^a-z0-9]+/).some((x) => singular(x) === singular(w) || (w.length >= 4 && x.startsWith(w)))).length;
+    const best = s.cart.map((item, i) => ({ i, sc: score(item.name) })).filter((x) => x.sc > 0).sort((a, b) => b.sc - a.sc)[0];
+    if (!best) return false;
+
+    const item = s.cart[best.i];
+    if (howMany !== null && howMany < item.quantity) {
+      item.quantity -= howMany;
+      s.deliveryFeePaisa = undefined;
+      s.deliveryAddressId = undefined;
+      await this.send(phone, s, buildText(phone, `➖ Removed ${howMany}. Now ${item.quantity} × ${item.name}.`));
+      await this.showCart(phone, s);
+      return true;
+    }
+    await this.editCartLine(phone, s, 'crm', best.i, item.menuItemId);
+    return true;
   }
 
   /** Empty the cart and show the menu straight away */
@@ -1761,10 +1896,10 @@ function pkr(paisa: number): string {
 }
 
 function cartLines(cart: CartItem[]): string[] {
-  return cart.map((item) => {
+  return cart.map((item, n) => {
     const mods = item.selectedModifiers.length
       ? ` (${item.selectedModifiers.map((m) => m.name).join(', ')})`
       : '';
-    return `• ${item.quantity} × ${item.name}${mods} = *PKR ${pkr(unitTotal(item) * item.quantity)}*`;
+    return `${n + 1}. ${item.quantity} × ${item.name}${mods} = *PKR ${pkr(unitTotal(item) * item.quantity)}*`;
   });
 }
