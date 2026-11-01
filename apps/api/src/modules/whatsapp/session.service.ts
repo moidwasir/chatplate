@@ -51,6 +51,9 @@ export interface WaSession {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SESSION_KEY_PREFIX = 'wa:session:';
+const LOCK_KEY_PREFIX = 'wa:lock:';
+/** A crashed handler's lock frees itself after this long */
+const LOCK_TTL_MS = 30_000;
 /** Session (and cart) survives 24 hours without activity */
 const SESSION_TTL = 24 * 60 * 60;
 /** After 30 minutes idle the customer is asked whether to continue or start over */
@@ -69,7 +72,8 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
     const url = this.config.get<string>('REDIS_URL') ?? 'redis://localhost:6379';
     this.redis = new Redis(url, { lazyConnect: true });
     this.redis.on('error', (err) => this.logger.error(`Redis error: ${err.message}`));
-    this.logger.log(`SessionService using Redis at ${url}`);
+    // Never log the password (hosted Redis URLs carry it)
+    this.logger.log(`SessionService using Redis at ${url.replace(/\/\/[^@/]*@/, '//***@')}`);
   }
 
   async onModuleDestroy() {
@@ -103,6 +107,32 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
 
   async clearSession(phone: string): Promise<void> {
     await this.redis.del(this.key(phone));
+  }
+
+  /**
+   * Run `fn` while holding this customer's lock, so two messages from the same
+   * person (e.g. quick double taps) are handled one after the other and never
+   * overwrite each other's session. Waits up to `waitMs` for the lock.
+   */
+  async withLock<T>(phone: string, fn: () => Promise<T>, waitMs = 20_000): Promise<T> {
+    const lockKey = `${LOCK_KEY_PREFIX}${phone}`;
+    const token = `${process.pid}:${Date.now()}:${Math.random()}`;
+    const deadline = Date.now() + waitMs;
+    while (!(await this.redis.set(lockKey, token, 'PX', LOCK_TTL_MS, 'NX'))) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for the session lock of ${phone}`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    try {
+      return await fn();
+    } finally {
+      // Release only our own lock (it may have expired and been taken by someone else)
+      await this.redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        lockKey,
+        token,
+      );
+    }
   }
 }
 

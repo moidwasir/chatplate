@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { OrderStatus } from '@safi/types';
 import { buildText } from '@safi/whatsapp';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { WhatsAppService } from './whatsapp.service';
+import { OrdersService } from '../orders/orders.service';
 
 export interface OrderStatusJob {
   orderId: string;
@@ -12,16 +13,23 @@ export interface OrderStatusJob {
 
 /**
  * Tells the customer on WhatsApp when staff move their order along.
- * Runs from the queue (job 'order-status'), so a slow or failed send never blocks the dashboard.
+ * Registered as an OrdersService status listener; failures are logged by OrdersService.
  */
 @Injectable()
-export class OrderNotifier {
+export class OrderNotifier implements OnModuleInit {
   private readonly logger = new Logger(OrderNotifier.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
+    private readonly orders: OrdersService,
   ) {}
+
+  onModuleInit() {
+    this.orders.onStatusChange(async (e) => {
+      if (e.source === 'WHATSAPP') await this.notifyStatus({ orderId: e.orderId, status: e.status, reason: e.reason });
+    });
+  }
 
   async notifyStatus({ orderId, status, reason }: OrderStatusJob): Promise<void> {
     const order = await this.prisma.order.findUnique({
@@ -48,7 +56,7 @@ export class OrderNotifier {
     });
 
     const messageId = await this.whatsapp.sendMessage(order.customer.phone, buildText(order.customer.phone, text), conversation?.id);
-    // sendMessage swallows API errors; throw so the queue retries
+    // sendMessage swallows API errors; surface it so it's logged
     if (!messageId) throw new Error(`WhatsApp update for ${order.orderNumber} (${status}) was not sent`);
     this.logger.log(`Customer notified: ${order.orderNumber} → ${status}`);
   }

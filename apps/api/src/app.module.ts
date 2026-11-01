@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { BullModule } from '@nestjs/bull';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { StorageModule } from './common/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -22,14 +21,6 @@ import { HealthModule } from './common/health/health.module';
     // Rate limiting — 100 requests per minute per IP globally
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
 
-    // BullMQ / Redis — shared queue configuration
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        redis: config.get<string>('REDIS_URL') ?? 'redis://localhost:6379',
-      }),
-    }),
-
     // Shared
     PrismaModule,
     StorageModule,
@@ -40,7 +31,8 @@ import { HealthModule } from './common/health/health.module';
     MenuModule,
     OrdersModule,
     WhatsAppModule,
-    RealtimeModule,
+    // WebSockets need a long-running server; on Vercel the dashboard polls instead
+    ...(process.env.VERCEL ? [] : [RealtimeModule]),
   ],
 })
 export class AppModule {}

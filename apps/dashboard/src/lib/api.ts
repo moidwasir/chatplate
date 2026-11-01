@@ -1,8 +1,6 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/v1';
-/** Socket.IO lives on the API origin, without the /v1 prefix */
-export const SOCKET_URL = new URL(API_URL).origin;
 
 const REFRESH_KEY = 'safi.refreshToken';
 

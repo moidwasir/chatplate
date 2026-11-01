@@ -1,13 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
-import { Queue } from 'bull';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { MessageDirection } from '@safi/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
-
-export const WHATSAPP_QUEUE = 'whatsapp-inbound';
 
 /** Meta delivery statuses in the order they progress */
 const STATUS_RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3 };
@@ -23,7 +19,6 @@ export class WhatsAppService {
   private nextSendAt = 0;
 
   constructor(
-    @InjectQueue(WHATSAPP_QUEUE) private readonly inboundQueue: Queue,
     config: ConfigService,
     private readonly prisma: PrismaService,
   ) {
@@ -35,52 +30,26 @@ export class WhatsAppService {
   }
 
   /**
-   * Push the raw Meta webhook payload into Bull for processing.
-   * The controller awaits this (Redis is fast) so a failure returns 5xx and Meta retries.
-   * Duplicate deliveries are dropped by jobId here and by the Message.waMessageId check in the engine.
+   * Pull the messages and delivery statuses out of a Meta webhook payload.
+   * Only events for our own number are returned: a business account can hold several
+   * numbers, and Meta sends all of them to every subscribed app.
    */
-  async enqueueInboundPayload(payload: any): Promise<void> {
+  parseWebhook(payload: any): { messages: { message: any; metadata: any }[]; statuses: any[] } {
+    const messages: { message: any; metadata: any }[] = [];
+    const statuses: any[] = [];
     for (const entry of payload?.entry ?? []) {
       for (const change of entry?.changes ?? []) {
         const value = change?.value ?? {};
-
-        // A business account can hold several numbers, and Meta sends all of them to every
-        // subscribed app. Only handle our own number, or we'd answer another business's chats.
         const toNumber = value?.metadata?.phone_number_id;
         if (!this.isDevOutbox() && toNumber && toNumber !== this.phoneNumberId) {
           this.logger.debug(`Ignoring webhook for another number (phone_number_id=${toNumber})`);
           continue;
         }
-
-        for (const message of value.messages ?? []) {
-          await this.inboundQueue.add(
-            'inbound-message',
-            { message, metadata: value },
-            {
-              jobId: `wa_msg_${message.id}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1000 },
-              removeOnComplete: 1000,
-              removeOnFail: 500,
-            },
-          );
-        }
-
-        for (const status of value.statuses ?? []) {
-          await this.inboundQueue.add(
-            'message-status',
-            { status },
-            {
-              jobId: `wa_status_${status.id}_${status.status}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1000 },
-              removeOnComplete: 500,
-              removeOnFail: 200,
-            },
-          );
-        }
+        for (const message of value.messages ?? []) messages.push({ message, metadata: value });
+        statuses.push(...(value.statuses ?? []));
       }
     }
+    return { messages, statuses };
   }
 
   /**

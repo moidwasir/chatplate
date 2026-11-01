@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { WhatsAppService } from './whatsapp.service';
+import { ConversationEngine } from './conversation.engine';
 import { Public } from '../auth/decorators/public.decorator';
 
 // Called by Meta — authenticated by verify token / signature, not JWT
@@ -27,6 +28,7 @@ export class WhatsAppController {
   constructor(
     private readonly config: ConfigService,
     private readonly whatsappService: WhatsAppService,
+    private readonly conversationEngine: ConversationEngine,
   ) {}
 
   /**
@@ -49,8 +51,7 @@ export class WhatsAppController {
 
   /**
    * POST /webhooks/whatsapp
-   * Receives all incoming WhatsApp events — MUST return 200 quickly
-   * Heavy processing is handed off to the queue
+   * Receives all incoming WhatsApp events and answers the customer
    */
   @Post()
   @HttpCode(HttpStatus.OK)
@@ -62,9 +63,15 @@ export class WhatsAppController {
     // Verify Meta signature over the raw bytes — re-serialised JSON won't match
     this.verifySignature(req.rawBody, signature);
 
-    // Queue it and acknowledge — the processor does the heavy work.
-    // If queueing fails we return 5xx so Meta retries rather than losing the message.
-    await this.whatsappService.enqueueInboundPayload(payload);
+    // Handled before replying, so the work finishes even on serverless hosts. If anything
+    // throws, Meta gets a 5xx and resends; already-handled messages are skipped by their id.
+    const { messages, statuses } = this.whatsappService.parseWebhook(payload);
+    for (const { message, metadata } of messages) {
+      await this.conversationEngine.handle(message, metadata);
+    }
+    for (const status of statuses) {
+      await this.whatsappService.handleMessageStatus(status);
+    }
 
     return { status: 'ok' };
   }

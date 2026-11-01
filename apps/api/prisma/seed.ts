@@ -177,7 +177,8 @@ async function main() {
   });
 
   // ─── Owner user ───────────────────────────────────────────────────────────
-  const passwordHash = await bcrypt.hash('changeme123', 12);
+  // Hosted databases get real credentials via env; the defaults are for local development only
+  const passwordHash = await bcrypt.hash(process.env.SEED_OWNER_PASSWORD ?? 'changeme123', 12);
   const owner = await prisma.user.upsert({
     where: { email: 'owner@safi.pk' },
     update: {},
@@ -203,7 +204,7 @@ async function main() {
       phone: '+923000000001',
       name: 'Demo Cashier',
       role: 'CASHIER',
-      pinHash: await bcrypt.hash('1234', 12),
+      pinHash: await bcrypt.hash(process.env.SEED_CASHIER_PIN ?? '1234', 12),
     },
   });
 
@@ -216,7 +217,9 @@ async function main() {
   console.log('✅ Seed complete!');
   console.log(`   Restaurant: ${restaurant.name}`);
   console.log(`   Branch: ${branch.name}`);
-  console.log(`   Owner login: owner@safi.pk / changeme123`);
+  console.log(
+    `   Owner login: owner@safi.pk / ${process.env.SEED_OWNER_PASSWORD ? '(the SEED_OWNER_PASSWORD you set)' : 'changeme123'}`,
+  );
 }
 
 main()

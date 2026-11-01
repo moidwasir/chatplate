@@ -12,7 +12,7 @@ import { OrdersService } from './orders.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { assertBranchAccess } from '../auth/guards/roles.guard';
 import type { AuthUser } from '../auth/auth.types';
-import { ListOrdersQueryDto, OrderStatsQueryDto, UpdateOrderStatusDto } from './dto/orders.dto';
+import { ListOrdersQueryDto, OrderChangesQueryDto, OrderStatsQueryDto, UpdateOrderStatusDto } from './dto/orders.dto';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -25,6 +25,16 @@ export class OrdersController {
   findAll(@CurrentUser() user: AuthUser, @Query() query: ListOrdersQueryDto) {
     assertBranchAccess(user, query.branchId);
     return this.ordersService.findAll(query);
+  }
+
+  /**
+   * What changed since the last poll — the dashboard's live updates on hosts without
+   * WebSockets. Pass the returned `now` as `since` next time.
+   */
+  @Get('changes')
+  changes(@CurrentUser() user: AuthUser, @Query() query: OrderChangesQueryDto) {
+    assertBranchAccess(user, query.branchId);
+    return this.ordersService.changes(query.branchId, query.since);
   }
 
   /** Order counts per status and sales for a date range (management sidebar) */

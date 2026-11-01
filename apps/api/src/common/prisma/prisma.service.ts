@@ -8,6 +8,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor() {
     super({
       log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      // Neon on Vercel provides a pooled URL tuned for Prisma (pgbouncer=true); fall back to DATABASE_URL
+      ...(process.env.POSTGRES_PRISMA_URL && { datasourceUrl: process.env.POSTGRES_PRISMA_URL }),
     });
   }
 

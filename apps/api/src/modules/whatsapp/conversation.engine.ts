@@ -76,6 +76,13 @@ export class ConversationEngine {
   // ─────────────────────────────────────────────────────────────────────────────
 
   async handle(message: any, metadata: any): Promise<void> {
+    const phone: string = message?.from ?? '';
+    if (!phone) return this.handleLocked(message, metadata);
+    // Webhooks can arrive in parallel; one customer's messages are handled in order
+    return this.session.withLock(phone, () => this.handleLocked(message, metadata));
+  }
+
+  private async handleLocked(message: any, metadata: any): Promise<void> {
     // ── Parse inbound message ────────────────────────────────────────────────
     const phone: string = message?.from ?? '';
     const waMessageId: string = message?.id ?? '';

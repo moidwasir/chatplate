@@ -67,3 +67,9 @@ export class OrderStatsQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() from?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() to?: string;
 }
+
+export class OrderChangesQueryDto {
+  @ApiProperty() @IsString() branchId!: string;
+  @ApiProperty({ description: 'Cursor from the previous call (`now`); omit on the first call' })
+  @IsOptional() @IsDateString() since?: string;
+}

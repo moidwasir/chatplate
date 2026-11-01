@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { endOfDay, startOfDay, subDays } from 'date-fns';
 import { api, errorMessage } from './api';
 import { useAuth } from './auth-store';
-import { useBranchEvent } from './socket';
+import { useBranchEvent } from './live';
 
 export type OrderStatus =
   | 'NEW'

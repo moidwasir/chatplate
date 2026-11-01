@@ -1,12 +1,11 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   ConflictException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
-import type { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -14,7 +13,15 @@ import { OrderStatus, ORDER_STATUS_TRANSITIONS } from '@safi/types';
 import { assertBranchAccess } from '../auth/guards/roles.guard';
 import type { AuthUser } from '../auth/auth.types';
 import type { CreateOrderDto, ListOrdersQueryDto, OrderStatsQueryDto } from './dto/orders.dto';
-import { WHATSAPP_QUEUE } from '../whatsapp/whatsapp.service';
+
+export interface StatusChangeEvent {
+  orderId: string;
+  orderNumber: string;
+  source: string;
+  status: OrderStatus;
+  reason?: string;
+}
+export type StatusListener = (event: StatusChangeEvent) => Promise<void>;
 
 /** Steps that only make sense for one kind of order */
 const DELIVERY_ONLY: OrderStatus[] = [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED];
@@ -26,9 +33,16 @@ export class OrdersService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly realtime: RealtimeGateway,
-    @InjectQueue(WHATSAPP_QUEUE) private readonly whatsappQueue: Queue,
+    // Absent when running serverless (no WebSockets there); the dashboard polls instead
+    @Optional() private readonly realtime?: RealtimeGateway,
   ) {}
+
+  /** Called after every status change (e.g. the WhatsApp module messages the customer) */
+  private readonly statusListeners: StatusListener[] = [];
+
+  onStatusChange(listener: StatusListener) {
+    this.statusListeners.push(listener);
+  }
 
   // ─── Queries ──────────────────────────────────────────────────────────────
 
@@ -53,6 +67,40 @@ export class OrdersService {
       this.prisma.order.count({ where }),
     ]);
     return { items, total, page, pageSize };
+  }
+
+  /** Orders created or updated after `since` (server clock), for dashboard polling */
+  async changes(branchId: string, since?: string) {
+    const now = new Date();
+    // First call: just hand back a cursor, nothing is "new" yet
+    if (!since) return { now: now.toISOString(), created: [], updated: [] };
+    const after = new Date(since);
+    const orders = await this.prisma.order.findMany({
+      where: { branchId, updatedAt: { gt: after, lte: now } },
+      select: {
+        id: true,
+        orderNumber: true,
+        orderType: true,
+        status: true,
+        total: true,
+        createdAt: true,
+        customer: { select: { name: true } },
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: 100,
+    });
+    const isNew = (o: (typeof orders)[number]) => o.createdAt > after;
+    return {
+      now: now.toISOString(),
+      created: orders.filter(isNew).map((o) => ({
+        orderId: o.id,
+        orderNumber: o.orderNumber,
+        orderType: o.orderType,
+        customerName: o.customer?.name ?? 'Guest',
+        total: o.total,
+      })),
+      updated: orders.filter((o) => !isNew(o)).map((o) => ({ orderId: o.id, status: o.status })),
+    };
   }
 
   /** Per-status counts plus sales (excluding cancelled/refunded) for the range */
@@ -234,7 +282,7 @@ export class OrdersService {
     this.logger.log(`Order created: ${orderNumber} | ${dto.source} | total ${total} paisa`);
 
     // Emit real-time event to branch room (dashboard, POS, KDS all hear this)
-    this.realtime.emitToBranch(dto.branchId, {
+    this.realtime?.emitToBranch(dto.branchId, {
       event: 'order.created',
       payload: {
         orderId: order.id,
@@ -319,7 +367,7 @@ export class OrdersService {
     this.logger.log(`Order ${order.orderNumber}: ${currentStatus} → ${newStatus} by ${user.id}`);
 
     // Real-time event → dashboard, POS, KDS
-    this.realtime.emitToBranch(order.branchId, {
+    this.realtime?.emitToBranch(order.branchId, {
       event: 'order.updated',
       payload: {
         orderId: order.id,
@@ -332,7 +380,15 @@ export class OrdersService {
       },
     });
 
-    if (order.source === 'WHATSAPP') await this.queueCustomerUpdate(order.id, order.orderNumber, newStatus, reason);
+    // Awaited so it completes before a serverless function is frozen; a failed
+    // notification is logged and never undoes the status change
+    for (const listener of this.statusListeners) {
+      try {
+        await listener({ orderId: order.id, orderNumber: order.orderNumber, source: order.source, status: newStatus, reason });
+      } catch (err: any) {
+        this.logger.error(`Status listener failed for ${order.orderNumber} (${newStatus}): ${err?.message}`);
+      }
+    }
 
     // Create kitchen tickets when order is ACCEPTED
     if (newStatus === OrderStatus.ACCEPTED) {
@@ -389,7 +445,7 @@ export class OrdersService {
       });
 
       // Emit to station room
-      this.realtime.emitToStation(stationId, {
+      this.realtime?.emitToStation(stationId, {
         event: 'ticket.created',
         payload: {
           ticketId: ticket.id,
@@ -410,25 +466,6 @@ export class OrdersService {
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
-
-  /** The status change is already saved, so a queue outage is logged rather than failing the request */
-  private async queueCustomerUpdate(orderId: string, orderNumber: string, status: OrderStatus, reason?: string) {
-    try {
-      await this.whatsappQueue.add(
-        'order-status',
-        { orderId, status, reason },
-        {
-          jobId: `order_status_${orderId}_${status}`,
-          attempts: 5,
-          backoff: { type: 'exponential', delay: 2000 },
-          removeOnComplete: 1000,
-          removeOnFail: 500,
-        },
-      );
-    } catch (err: any) {
-      this.logger.error(`Could not queue WhatsApp update for ${orderNumber} (${status}): ${err?.message}`);
-    }
-  }
 
   private async generateOrderNumber(branchId: string): Promise<string> {
     const count = await this.prisma.order.count({ where: { branchId } });

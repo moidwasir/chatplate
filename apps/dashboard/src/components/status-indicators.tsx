@@ -3,16 +3,14 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@safi/ui';
 import { api } from '@/lib/api';
-import { branchSocket } from '@/lib/socket';
-import { useAuth } from '@/lib/auth-store';
+import { useLiveStatus } from '@/lib/live';
 
 type Health = 'checking' | 'up' | 'down';
 
-/** API health (polled) + real-time socket connection, shown in the top bar */
+/** API health + live-updates connection, shown in the top bar */
 export function StatusIndicators() {
-  const branchId = useAuth((s) => s.branchId);
   const [apiHealth, setApiHealth] = useState<Health>('checking');
-  const [live, setLive] = useState<Health>('checking');
+  const live = useLiveStatus();
 
   useEffect(() => {
     let cancelled = false;
@@ -28,22 +26,6 @@ export function StatusIndicators() {
       clearInterval(timer);
     };
   }, []);
-
-  useEffect(() => {
-    if (!branchId) return;
-    const socket = branchSocket(branchId);
-    setLive(socket.connected ? 'up' : 'checking');
-    const up = () => setLive('up');
-    const down = () => setLive('down');
-    socket.on('connect', up);
-    socket.on('disconnect', down);
-    socket.on('connect_error', down);
-    return () => {
-      socket.off('connect', up);
-      socket.off('disconnect', down);
-      socket.off('connect_error', down);
-    };
-  }, [branchId]);
 
   return (
     <div className="flex items-center gap-4 text-xs text-gray-400">

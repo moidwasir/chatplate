@@ -86,6 +86,19 @@ Button taps are `"type":"interactive","interactive":{"button_reply":{"id":"actio
 
 The seed branch opens 11:00–23:30 Pakistan time and is closed on Tuesdays. To test outside those hours, start the API with e.g. `RESTAURANT_TIMEZONE=America/Los_Angeles`.
 
+### Hosted on Vercel (production)
+
+| What | Where |
+|---|---|
+| Dashboard | https://chatplate-dashboard.vercel.app (project `chatplate-dashboard`, root `apps/dashboard`) |
+| API | https://chatplate-api.vercel.app/v1 (project `chatplate-api`, root `apps/api`, entry `apps/api/api/index.js` → `src/serverless.ts`) |
+| WhatsApp callback URL | `https://chatplate-api.vercel.app/v1/webhooks/whatsapp` |
+| Postgres | Neon `chatplate-db` (Vercel Marketplace); migrations run in `apps/api/scripts/vercel-build.sh` over `DATABASE_URL_UNPOOLED`; runtime uses `POSTGRES_PRISMA_URL` |
+| Redis | Upstash `chatplate-redis`, **pending** marketplace terms acceptance (needed for WhatsApp chat sessions) |
+| Photos | Vercel Blob `chatplate-photos` (`BLOB_READ_WRITE_TOKEN`), public https URLs |
+
+How it differs from the local server: no Bull queue (webhooks and status updates are handled within the request; a per-customer Redis lock keeps one customer's messages in order), no Socket.IO (the dashboard polls `GET /orders/changes` every 4 s; the Socket.IO gateway still runs locally for future KDS/POS). Production was seeded with a generated owner password and cashier PIN (`SEED_OWNER_PASSWORD`, `SEED_CASHIER_PIN`), not the dev defaults. Deploy from the **repo root** with `VERCEL_ORG_ID`/`VERCEL_PROJECT_ID` from `apps/*/.vercel/project.json` (deploying from the app folder uploads only that folder). `.vercelignore` keeps `.env` and build output out of uploads.
+
 ### Connecting the real WhatsApp number
 
 Plan: reuse **+92 304 5945496** (already in the Mavon business portfolio, previously JobsChance's test number, display name still "JobsChance", limit 250 customers/24 h). After filling the WhatsApp values in `.env`, run:

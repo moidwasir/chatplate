@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Bell, BellOff, X } from 'lucide-react';
 import { formatPKR } from '@/lib/format';
-import { useBranchEvent, type OrderCreatedEvent } from '@/lib/socket';
+import { useBranchEvent, type OrderCreatedEvent } from '@/lib/live';
 
 const SOUND_KEY = 'safi.orderSound';
 

@@ -49,7 +49,15 @@
 | 25 | WhatsApp: full formatted menu message, richer category list, paging for long menus | ✅ |
 | 26 | End-to-end test + rewrite PROJECT_STATUS.md | ✅ |
 
-**Session complete.** Next up: see "Next steps" in [PROJECT_STATUS.md](./PROJECT_STATUS.md).
+**Part 4 goal:** run ChatPlate on Vercel (API + dashboard), giving WhatsApp a permanent callback URL
+
+| # | Task | Status |
+|---|---|---|
+| 27 | API: process WhatsApp webhooks and order updates directly (no Bull queue) | 🔄 |
+| 28 | API: Socket.IO only when running as a normal server; Vercel entry point; photo uploads fail clearly without S3 | ⏳ |
+| 29 | Dashboard: live updates by polling a lightweight "what changed" endpoint | ⏳ |
+| 30 | Vercel: Neon Postgres + Upstash Redis, two projects (api, dashboard), env vars, migrate + seed | ⏳ |
+| 31 | Deploy, test end to end, give the WhatsApp callback URL; update PROJECT_STATUS.md | ⏳ |
 
 ---
 

@@ -43,3 +43,6 @@ apps/api/uploads/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Vercel CLI links
+.vercel
