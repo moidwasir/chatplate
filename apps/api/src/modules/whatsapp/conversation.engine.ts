@@ -11,6 +11,8 @@ import {
   buildGreeting,
   buildOrderReceived,
   buildTipSelection,
+  buildCarousel,
+  CAROUSEL_MAX_CARDS,
 } from '@safi/whatsapp';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { MenuService } from '../menu/menu.service';
@@ -233,6 +235,7 @@ export class ConversationEngine {
     if (input.id === 'action_staff' || (input.text && STAFF_WORDS.includes(input.text))) return this.handover(phone, s);
     if (input.id === 'cart_view') return this.showCart(phone, s);
     if (input.id === 'cart_add') return this.sendCategoryMenu(phone, s);
+    if (stripPrefix(input.id, 'add_') && s.orderType) return this.handleItemSelection(phone, s, input);
     if (input.id === 'menu_full' || (input.text && FULL_MENU_TEXT.test(input.text))) {
       await this.sendFullMenu(phone, s);
       // Ordering starts from the category list; mid-item steps just get their question again
@@ -465,6 +468,36 @@ export class ConversationEngine {
       return this.sendCategoryMenu(phone, s);
     }
 
+    s.selectedCategoryId = categoryId;
+    s.state = ConversationState.MENU_ITEM;
+
+    // Photo cards when every item has a public photo; the text list otherwise
+    // (or if WhatsApp refuses the carousel)
+    if (category.items.length >= 2 && category.items.every((i) => isPublicImage(i.imageUrl))) {
+      if (await this.sendItemCarousel(phone, s, category, page)) return;
+      this.logger.warn(`Carousel for "${category.name}" was refused; sending the list instead`);
+    }
+    // A single item with a photo: one photo message with Add (carousels need 2+ cards)
+    const only = category.items.length === 1 ? category.items[0] : null;
+    if (only && isPublicImage(only.imageUrl)) {
+      await this.save(phone, s);
+      const sent = await this.send(
+        phone,
+        s,
+        buildButtons(
+          phone,
+          `*${only.name}*\nPKR ${pkr(only.price)}${only.description ? `\n${truncate(only.description, 300)}` : ''}`,
+          [
+            { id: `add_${only.id}`, title: '➕ Add' },
+            { id: 'back_categories', title: '⬅️ Categories' },
+            ...(s.cart.length > 0 ? [{ id: 'cart_view', title: '🛒 View cart' }] : []),
+          ],
+          { imageUrl: only.imageUrl! },
+        ),
+      );
+      if (sent) return;
+    }
+
     // 10 rows: items, "more" when there are further pages, and "back"
     const { slice, next } = paginate(category.items, page, 9);
     const rows = slice.map((item) => ({
@@ -477,8 +510,6 @@ export class ConversationEngine {
     }
     rows.push({ id: 'back_categories', title: '⬅️ Back to categories', description: '' });
 
-    s.selectedCategoryId = categoryId;
-    s.state = ConversationState.MENU_ITEM;
     await this.save(phone, s);
     const heading = `${categoryEmoji(category.name)} ${category.name}`;
     await this.send(
@@ -494,6 +525,46 @@ export class ConversationEngine {
     );
   }
 
+  /**
+   * The category's items as swipeable photo cards with a "➕ Add" button each, then a
+   * small message with Back / Cart / More. Returns false if WhatsApp refused the carousel.
+   */
+  private async sendItemCarousel(
+    phone: string,
+    s: WaSession,
+    category: Awaited<ReturnType<MenuService['getFullMenu']>>[number],
+    page: number,
+  ): Promise<boolean> {
+    // Even pages (e.g. 11 items → 6 + 5) so no page is left with a single card
+    const pages = Math.ceil(category.items.length / CAROUSEL_MAX_CARDS);
+    const perPage = Math.ceil(category.items.length / pages);
+    const current = Math.min(Math.max(page, 0), pages - 1);
+    const items = category.items.slice(current * perPage, (current + 1) * perPage);
+    const next = current + 1 < pages ? current + 1 : null;
+
+    await this.save(phone, s);
+    const sent = await this.send(
+      phone,
+      s,
+      buildCarousel(
+        phone,
+        `${categoryEmoji(category.name)} *${category.name}*${pages > 1 ? ` (${current + 1}/${pages})` : ''}\nSwipe to see everything 👉`,
+        items.map((item) => ({
+          imageUrl: item.imageUrl!,
+          text: `*${item.name}*\nPKR ${pkr(item.price)}${item.description ? `\n${truncate(item.description, 90)}` : ''}`,
+          buttons: [{ id: `add_${item.id}`, title: '➕ Add' }],
+        })),
+      ),
+    );
+    if (!sent) return false;
+
+    const buttons = [{ id: 'back_categories', title: '⬅️ Categories' }];
+    if (next !== null) buttons.push({ id: `items_page_${next}`, title: '➡️ More items' });
+    if (s.cart.length > 0) buttons.push({ id: 'cart_view', title: '🛒 View cart' });
+    await this.send(phone, s, buildButtons(phone, 'Tap *➕ Add* on any card to order it.', buttons));
+    return true;
+  }
+
   private async handleItemSelection(phone: string, s: WaSession, input: Input): Promise<void> {
     if (input.id === 'back_categories') return this.sendCategoryMenu(phone, s);
     const page = stripPrefix(input.id, 'items_page_');
@@ -502,7 +573,8 @@ export class ConversationEngine {
     const categoryId = stripPrefix(input.id, 'cat_');
     if (categoryId) return this.sendItemsForCategory(phone, s, categoryId);
 
-    const itemId = stripPrefix(input.id, 'item_');
+    const fromCard = stripPrefix(input.id, 'add_');
+    const itemId = fromCard ?? stripPrefix(input.id, 'item_');
     const item = itemId ? await this.findMenuItem(s.branchId, itemId) : null;
     if (!item) {
       if (itemId) await this.send(phone, s, buildText(phone, '😔 Sorry, that item is no longer available.'));
@@ -511,8 +583,10 @@ export class ConversationEngine {
 
     // Show the item: photo when we have a public one, then its options
     const caption = `*${item.name}* — PKR ${pkr(item.price)}${item.description ? `\n${item.description}` : ''}`;
-    if (item.imageUrl && /^https:\/\//.test(item.imageUrl)) {
-      await this.send(phone, s, buildImage(phone, item.imageUrl, caption));
+    if (fromCard) {
+      // The customer just saw the photo card; go straight to options / quantity
+    } else if (isPublicImage(item.imageUrl)) {
+      await this.send(phone, s, buildImage(phone, item.imageUrl!, caption));
     } else if (item.description) {
       await this.send(phone, s, buildText(phone, caption));
     }
@@ -1156,6 +1230,11 @@ function paginate<T>(all: T[], page: number, rowsAvailable: number): { slice: T[
   const start = Math.min(page, Math.ceil(all.length / perPage) - 1) * perPage;
   const slice = all.slice(start, start + perPage);
   return { slice, next: start + perPage < all.length ? Math.floor(start / perPage) + 1 : null };
+}
+
+/** WhatsApp fetches media itself, so only public https links work */
+function isPublicImage(url: string | null | undefined): boolean {
+  return !!url && /^https:\/\//.test(url);
 }
 
 /** A fitting emoji for a category name; the menu has no icon field */

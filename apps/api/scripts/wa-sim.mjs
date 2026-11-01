@@ -39,7 +39,7 @@ const c = {
   red: (s) => `\x1b[31m${s}\x1b[0m`,
 };
 
-/** Choices offered by the most recent bot message: [{ id, title, kind }] */
+/** Choices offered by the bot's latest reply (all its messages together): [{ id, title, kind }] */
 let choices = [];
 let wantsLocation = false;
 
@@ -153,12 +153,12 @@ function render(p) {
   } else if (p.type === 'interactive') {
     const i = p.interactive ?? {};
     if (i.header?.text) bubble(`*${i.header.text}*`);
+    if (i.header?.image?.link) bubble(c.dim(`[photo] ${i.header.image.link}`));
     bubble(i.body?.text ?? '');
     if (i.footer?.text) bubble(c.dim(i.footer.text));
     if (i.type === 'button') {
-      choices = (i.action?.buttons ?? []).map((b) => ({ id: b.reply.id, title: b.reply.title, kind: 'button_reply' }));
+      choices.push(...(i.action?.buttons ?? []).map((b) => ({ id: b.reply.id, title: b.reply.title, kind: 'button_reply' })));
     } else if (i.type === 'list') {
-      choices = [];
       for (const sec of i.action?.sections ?? []) {
         if (sec.title) choices.push({ heading: sec.title });
         for (const r of sec.rows ?? []) {
@@ -166,6 +166,14 @@ function render(p) {
         }
       }
       bubble(c.dim(`[list button: ${i.action?.button ?? 'Select'}]`));
+    } else if (i.type === 'carousel') {
+      for (const card of i.action?.cards ?? []) {
+        bubble(c.dim(`  ┄ card ${card.card_index + 1} ┄ [photo] ${card.header?.image?.link ?? ''}`));
+        bubble(`  ${(card.body?.text ?? '').split('\n').join('\n  ')}`);
+        for (const b of card.action?.buttons ?? []) {
+          choices.push({ id: b.quick_reply.id, title: `${b.quick_reply.title}  (${(card.body?.text ?? '').split('\n')[0]})`, kind: 'button_reply' });
+        }
+      }
     } else if (i.type === 'location_request_message') {
       wantsLocation = true;
       bubble(c.dim('[📍 Send location] — type "l" to share a pin'));

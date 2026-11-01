@@ -17,7 +17,7 @@ export interface WaButtonsMessage {
   type: 'interactive';
   interactive: {
     type: 'button';
-    header?: { type: 'text'; text: string };
+    header?: { type: 'text'; text: string } | { type: 'image'; image: { link: string } };
     body: { text: string };
     footer?: { text: string };
     action: {
@@ -66,6 +66,27 @@ export interface WaImageMessage {
   image: { link: string; caption?: string };
 }
 
+/** Swipeable photo cards, each with its own quick-reply buttons (free-form; needs the 24 h window) */
+export interface WaCarouselMessage {
+  messaging_product: 'whatsapp';
+  recipient_type: 'individual';
+  to: string;
+  type: 'interactive';
+  interactive: {
+    type: 'carousel';
+    body: { text: string };
+    action: {
+      cards: Array<{
+        card_index: number;
+        type: 'button';
+        header: { type: 'image'; image: { link: string } };
+        body: { text: string };
+        action: { buttons: Array<{ type: 'quick_reply'; quick_reply: { id: string; title: string } }> };
+      }>;
+    };
+  };
+}
+
 export interface WaTemplateMessage {
   messaging_product: 'whatsapp';
   to: string;
@@ -88,6 +109,7 @@ export type WaOutboundMessage =
   | WaListMessage
   | WaLocationRequestMessage
   | WaImageMessage
+  | WaCarouselMessage
   | WaTemplateMessage;
 
 // ─── Builders ─────────────────────────────────────────────────────────────────
@@ -105,7 +127,8 @@ export function buildButtons(
   to: string,
   body: string,
   buttons: Array<{ id: string; title: string }>,
-  header?: string,
+  /** Text header, or `{ imageUrl }` for a photo above the message (public https link) */
+  header?: string | { imageUrl: string },
   footer?: string,
 ): WaButtonsMessage {
   if (buttons.length > 3) throw new Error('WhatsApp supports max 3 reply buttons');
@@ -116,7 +139,10 @@ export function buildButtons(
     type: 'interactive',
     interactive: {
       type: 'button',
-      ...(header && { header: { type: 'text', text: header } }),
+      ...(header &&
+        (typeof header === 'string'
+          ? { header: { type: 'text' as const, text: header } }
+          : { header: { type: 'image' as const, image: { link: header.imageUrl } } })),
       body: { text: body },
       ...(footer && { footer: { text: footer } }),
       action: {
@@ -164,6 +190,47 @@ export function buildLocationRequest(to: string, text: string): WaLocationReques
       type: 'location_request_message',
       body: { text },
       action: { name: 'send_location' },
+    },
+  };
+}
+
+/** WhatsApp carousels hold 2–10 cards */
+export const CAROUSEL_MAX_CARDS = 10;
+
+/**
+ * Carousel of photo cards (e.g. menu items). Every card needs a public https image.
+ * Card body is kept short; button titles are capped at 20 characters by WhatsApp.
+ */
+export function buildCarousel(
+  to: string,
+  body: string,
+  cards: Array<{ imageUrl: string; text: string; buttons: Array<{ id: string; title: string }> }>,
+): WaCarouselMessage {
+  if (cards.length < 2 || cards.length > CAROUSEL_MAX_CARDS) {
+    throw new Error(`WhatsApp carousels need 2–${CAROUSEL_MAX_CARDS} cards`);
+  }
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'carousel',
+      body: { text: body },
+      action: {
+        cards: cards.map((c, i) => ({
+          card_index: i,
+          type: 'button' as const,
+          header: { type: 'image' as const, image: { link: c.imageUrl } },
+          body: { text: c.text.length > 160 ? `${c.text.slice(0, 159)}…` : c.text },
+          action: {
+            buttons: c.buttons.slice(0, 2).map((b) => ({
+              type: 'quick_reply' as const,
+              quick_reply: { id: b.id, title: b.title.slice(0, 20) },
+            })),
+          },
+        })),
+      },
     },
   };
 }
