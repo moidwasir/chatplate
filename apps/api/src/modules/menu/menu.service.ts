@@ -118,6 +118,7 @@ export class MenuService {
   async createItem(dto: CreateItemDto, user: AuthUser) {
     const category = await this.loadCategory(dto.categoryId, user);
     assertServingWindow(dto.servingStart, dto.servingEnd);
+    assertDealPrice(dto.price, dto.compareAtPrice);
     if (dto.stationId) await this.assertStation(dto.stationId, category.branchId);
     return this.prisma.item.create({ data: dto, include: itemInclude });
   }
@@ -134,6 +135,10 @@ export class MenuService {
     assertServingWindow(
       dto.servingStart !== undefined ? dto.servingStart : item.servingStart,
       dto.servingEnd !== undefined ? dto.servingEnd : item.servingEnd,
+    );
+    assertDealPrice(
+      dto.price ?? item.price,
+      dto.compareAtPrice !== undefined ? dto.compareAtPrice : item.compareAtPrice,
     );
     if (dto.stationId) await this.assertStation(dto.stationId, item.category.branchId);
 
@@ -312,4 +317,11 @@ function assertServingWindow(start?: string | null, end?: string | null) {
 
 function assertChoices(min: number, max: number) {
   if (min > max) throw new BadRequestException('minChoices cannot be greater than maxChoices');
+}
+
+/** A deal's regular price has to be higher than what the customer pays */
+function assertDealPrice(price: number, compareAtPrice: number | null | undefined) {
+  if (compareAtPrice != null && compareAtPrice <= price) {
+    throw new BadRequestException('Regular price must be higher than the deal price');
+  }
 }

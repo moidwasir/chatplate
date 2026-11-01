@@ -68,6 +68,12 @@ export class CreateItemDto {
   @Min(0)
   price!: number;
 
+  /** Regular price in paisa, for deals ("save PKR X"); must be above `price`. null clears it */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  compareAtPrice?: number | null;
+
   @IsOptional()
   @IsString()
   stationId?: string | null;

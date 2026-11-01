@@ -116,6 +116,7 @@ model Item {
   nameUrdu     String?
   description  String?
   price        Int       // paisa
+  compareAtPrice Int?    // paisa; the regular price a deal is compared with ("save PKR X")
   imageUrl     String?
   stationId    String?
   station      Station?  @relation(fields: [stationId], references: [id])

@@ -27,6 +27,8 @@ export interface MenuItem {
   nameUrdu: string | null;
   description: string | null;
   price: number;
+  /** Regular price for deals ("save Rs X"), paisa */
+  compareAtPrice: number | null;
   imageUrl: string | null;
   isSoldOut: boolean;
   isActive: boolean;

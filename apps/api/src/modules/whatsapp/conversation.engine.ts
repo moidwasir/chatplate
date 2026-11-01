@@ -22,6 +22,7 @@ import {
   SessionService,
   WaSession,
   CartItem,
+  SelectedModifier,
   SESSION_IDLE_MS,
   addToCart,
   cartSubtotal,
@@ -235,7 +236,18 @@ export class ConversationEngine {
     if (input.id === 'action_staff' || (input.text && STAFF_WORDS.includes(input.text))) return this.handover(phone, s);
     if (input.id === 'cart_view') return this.showCart(phone, s);
     if (input.id === 'cart_add') return this.sendCategoryMenu(phone, s);
-    if (stripPrefix(input.id, 'add_') && s.orderType) return this.handleItemSelection(phone, s, input);
+    const tappedItem = stripPrefix(input.id, 'buy_') ?? stripPrefix(input.id, 'add_');
+    if (tappedItem) {
+      const mode = input.id!.startsWith('buy_') ? 'buy' : 'add';
+      if (!s.orderType) {
+        // Ask delivery/pickup first, then carry on with this item
+        s.pendingItem = { id: tappedItem, mode };
+        return this.askOrderType(phone, s);
+      }
+      return mode === 'buy' ? this.buyNow(phone, s, tappedItem) : this.handleItemSelection(phone, s, input);
+    }
+    const customise = stripPrefix(input.id, 'opt_');
+    if (customise) return this.startItemOptions(phone, s, customise);
     if (input.id === 'menu_full' || (input.text && FULL_MENU_TEXT.test(input.text))) {
       await this.sendFullMenu(phone, s);
       // Ordering starts from the category list; mid-item steps just get their question again
@@ -357,6 +369,14 @@ export class ConversationEngine {
         s.orderType = input.id === 'type_delivery' ? 'DELIVERY' : 'PICKUP';
         s.deliveryAddressId = undefined;
         s.deliveryFeePaisa = undefined;
+        // An item tapped before choosing delivery/pickup carries on now
+        if (s.pendingItem) {
+          const { id, mode } = s.pendingItem;
+          s.pendingItem = undefined;
+          return mode === 'buy'
+            ? this.buyNow(phone, s, id)
+            : this.handleItemSelection(phone, s, { id: `add_${id}`, text: '', location: null });
+        }
         // Changing order type from the cart goes straight back to checkout
         return s.cart.length > 0 ? this.checkout(phone, s) : this.sendCategoryMenu(phone, s);
       case 'action_back':
@@ -373,7 +393,7 @@ export class ConversationEngine {
   private async sendCategoryMenu(phone: string, s: WaSession, page = 0): Promise<void> {
     if (!s.orderType) return this.askOrderType(phone, s);
 
-    const categories = await this.menu.getFullMenu(s.branchId);
+    const categories = dealsFirst(await this.menu.getFullMenu(s.branchId));
     if (categories.length === 0) {
       await this.send(phone, s, buildText(phone, '😔 Sorry, no menu items are available right now. Please try again later.'));
       return;
@@ -390,8 +410,10 @@ export class ConversationEngine {
     const { slice, next } = paginate(categories, page, 10 - extras.length);
     const rows = slice.map((c) => ({
       id: `cat_${c.id}`,
-      title: truncate(`${categoryEmoji(c.name)} ${c.name}`, 24),
-      description: `${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
+      title: truncate(`${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} ${c.name}`, 24),
+      description: isDealCategory(c.name)
+        ? `${c.items.length} deal${c.items.length !== 1 ? 's' : ''} · save up to PKR ${pkr(Math.max(0, ...c.items.map(saving)))}`
+        : `${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
     }));
     if (next !== null) rows.push({ id: `cat_page_${next}`, title: '➡️ More categories', description: `Page ${next + 1}` });
 
@@ -415,7 +437,7 @@ export class ConversationEngine {
 
   /** The whole menu as formatted text: categories, items, prices, short descriptions */
   private async sendFullMenu(phone: string, s: WaSession, categories?: Awaited<ReturnType<MenuService['getFullMenu']>>): Promise<void> {
-    categories ??= await this.menu.getFullMenu(s.branchId);
+    categories = dealsFirst(categories ?? (await this.menu.getFullMenu(s.branchId)));
     s.fullMenuShown = true;
     if (categories.length === 0) {
       await this.send(phone, s, buildText(phone, '😔 Sorry, no menu items are available right now.'));
@@ -430,9 +452,9 @@ export class ConversationEngine {
           i.description ? `   _${truncate(i.description, 70)}_` : '',
           hasOptions ? '   ✨ Customisable' : '',
         ].filter(Boolean);
-        return [`▸ *${i.name}* · PKR ${pkr(i.price)}`, ...details].join('\n');
+        return [`▸ *${i.name}* · ${priceText(i)}`, ...details].join('\n');
       });
-      return `${categoryEmoji(c.name)} *${c.name.toUpperCase()}*\n${lines.join('\n')}`;
+      return `${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} *${c.name.toUpperCase()}*\n${lines.join('\n')}`;
     });
 
     // Split between categories so no message runs past WhatsApp's length limit
@@ -486,11 +508,11 @@ export class ConversationEngine {
         s,
         buildButtons(
           phone,
-          `*${only.name}*\nPKR ${pkr(only.price)}${only.description ? `\n${truncate(only.description, 300)}` : ''}`,
+          `*${only.name}*\n${priceText(only)}${only.description ? `\n${truncate(only.description, 300)}` : ''}`,
           [
-            { id: `add_${only.id}`, title: '➕ Add' },
+            { id: `buy_${only.id}`, title: '⚡ Buy now' },
+            { id: `add_${only.id}`, title: '➕ Add to cart' },
             { id: 'back_categories', title: '⬅️ Categories' },
-            ...(s.cart.length > 0 ? [{ id: 'cart_view', title: '🛒 View cart' }] : []),
           ],
           { imageUrl: only.imageUrl! },
         ),
@@ -503,7 +525,7 @@ export class ConversationEngine {
     const rows = slice.map((item) => ({
       id: `item_${item.id}`,
       title: truncate(item.name, 24),
-      description: truncate(`PKR ${pkr(item.price)}${item.description ? ` · ${item.description}` : ''}`, 72),
+      description: truncate(`${priceText(item, false)}${item.description ? ` · ${item.description}` : ''}`, 72),
     }));
     if (next !== null) {
       rows.push({ id: `items_page_${next}`, title: '➡️ More items', description: `Page ${next + 1} of ${Math.ceil(category.items.length / 8)}` });
@@ -551,8 +573,11 @@ export class ConversationEngine {
         `${categoryEmoji(category.name)} *${category.name}*${pages > 1 ? ` (${current + 1}/${pages})` : ''}\nSwipe to see everything 👉`,
         items.map((item) => ({
           imageUrl: item.imageUrl!,
-          text: `*${item.name}*\nPKR ${pkr(item.price)}${item.description ? `\n${truncate(item.description, 90)}` : ''}`,
-          buttons: [{ id: `add_${item.id}`, title: '➕ Add' }],
+          text: `*${item.name}*\n${priceText(item)}${item.description ? `\n${truncate(item.description, 80)}` : ''}`,
+          buttons: [
+            { id: `buy_${item.id}`, title: '⚡ Buy now' },
+            { id: `add_${item.id}`, title: '➕ Add to cart' },
+          ],
         })),
       ),
     );
@@ -561,7 +586,11 @@ export class ConversationEngine {
     const buttons = [{ id: 'back_categories', title: '⬅️ Categories' }];
     if (next !== null) buttons.push({ id: `items_page_${next}`, title: '➡️ More items' });
     if (s.cart.length > 0) buttons.push({ id: 'cart_view', title: '🛒 View cart' });
-    await this.send(phone, s, buildButtons(phone, 'Tap *➕ Add* on any card to order it.', buttons));
+    await this.send(
+      phone,
+      s,
+      buildButtons(phone, '⚡ *Buy now*: straight to checkout with the standard options\n➕ *Add to cart*: choose options, keep shopping', buttons),
+    );
     return true;
   }
 
@@ -581,8 +610,40 @@ export class ConversationEngine {
       return this.prompt(phone, s);
     }
 
+    const hasOptions = item.modifierGroups.some((g) => g.modifiers.length > 0);
+    if (!fromCard && hasOptions) {
+      // Let the customer skip the questions entirely
+      const body = `*${item.name}*\n${priceText(item)}${item.description ? `\n${item.description}` : ''}\n\n⚡ *Buy now* uses the standard options: ${standardOptionsText(item)}`;
+      await this.save(phone, s);
+      await this.send(
+        phone,
+        s,
+        buildButtons(
+          phone,
+          body,
+          [
+            { id: `buy_${item.id}`, title: '⚡ Buy now' },
+            { id: `opt_${item.id}`, title: '🛠️ Choose options' },
+            { id: 'back_categories', title: '⬅️ Back' },
+          ],
+          isPublicImage(item.imageUrl) ? { imageUrl: item.imageUrl! } : undefined,
+        ),
+      );
+      return;
+    }
+    return this.startItemOptions(phone, s, item.id, fromCard !== null);
+  }
+
+  /** Begin the options → quantity questions for an item */
+  private async startItemOptions(phone: string, s: WaSession, itemId: string, photoSeen = true): Promise<void> {
+    const item = await this.findMenuItem(s.branchId, itemId);
+    if (!item) {
+      await this.send(phone, s, buildText(phone, '😔 Sorry, that item is no longer available.'));
+      return this.prompt(phone, s);
+    }
+    const fromCard = photoSeen ? item.id : null;
     // Show the item: photo when we have a public one, then its options
-    const caption = `*${item.name}* — PKR ${pkr(item.price)}${item.description ? `\n${item.description}` : ''}`;
+    const caption = `*${item.name}* — ${priceText(item)}${item.description ? `\n${item.description}` : ''}`;
     if (fromCard) {
       // The customer just saw the photo card; go straight to options / quantity
     } else if (isPublicImage(item.imageUrl)) {
@@ -647,7 +708,7 @@ export class ConversationEngine {
     const options = group.modifiers.filter((m) => !pickedIds.has(m.id)).slice(0, extraRow ? 9 : 10);
     const rows = options.map((m) => ({
       id: `mod_${m.id}`,
-      title: truncate(m.name, 24),
+      title: truncate(`${optionEmoji(m.name, group.name)} ${m.name}`, 24),
       description: m.priceAdjustment > 0 ? `+ PKR ${pkr(m.priceAdjustment)}` : '',
     }));
     if (extraRow) rows.push(extraRow);
@@ -660,11 +721,47 @@ export class ConversationEngine {
           : 'Optional.';
     const soFar = picked.length > 0 ? `\nSelected: ${picked.map((m) => m.name).join(', ')}` : '';
 
+    // Up to 3 choices fit as tap buttons (like Delivery / Pickup); more need a list
+    if (rows.length <= 3) {
+      const prices = options.filter((m) => m.priceAdjustment > 0);
+      const priceNote = prices.length ? `\n${prices.map((m) => `${optionEmoji(m.name, group.name)} ${m.name}: + PKR ${pkr(m.priceAdjustment)}`).join('\n')}` : '';
+      await this.send(
+        phone,
+        s,
+        buildButtons(
+          phone,
+          `*${item.name}*: ${group.name}\n${rule}${soFar}${priceNote}`,
+          rows.map((r) => ({ id: r.id, title: truncate(r.title, 20) })),
+        ),
+      );
+      return;
+    }
     await this.send(
       phone,
       s,
       buildList(phone, `*${item.name}*: ${group.name}\n${rule}${soFar}`, [{ title: truncate(group.name, 24), rows }], 'Choose', truncate(group.name, 60)),
     );
+  }
+
+  /** ⚡ Buy now: one of this item with its standard options, straight to checkout */
+  private async buyNow(phone: string, s: WaSession, itemId: string): Promise<void> {
+    const item = await this.findMenuItem(s.branchId, itemId);
+    if (!item) {
+      await this.send(phone, s, buildText(phone, '😔 Sorry, that item is no longer available.'));
+      return this.prompt(phone, s);
+    }
+    const selectedModifiers = standardOptions(item);
+    addToCart(s.cart, {
+      menuItemId: item.id,
+      name: item.name,
+      unitPrice: item.price,
+      quantity: 1,
+      selectedModifiers,
+    });
+    s.draft = undefined;
+    const chosen = selectedModifiers.map((m) => m.name).join(', ');
+    await this.send(phone, s, buildText(phone, `⚡ 1 × *${item.name}*${chosen ? ` (${chosen})` : ''} added. Taking you to checkout…`));
+    return this.checkout(phone, s);
   }
 
   private async handleItemDetail(phone: string, s: WaSession, input: Input): Promise<void> {
@@ -1230,6 +1327,89 @@ function paginate<T>(all: T[], page: number, rowsAvailable: number): { slice: T[
   const start = Math.min(page, Math.ceil(all.length / perPage) - 1) * perPage;
   const slice = all.slice(start, start + perPage);
   return { slice, next: start + perPage < all.length ? Math.floor(start / perPage) + 1 : null };
+}
+
+type MenuItemLike = {
+  price: number;
+  compareAtPrice?: number | null;
+  modifierGroups: { id: string; name: string; required: boolean; minChoices: number; modifiers: { id: string; name: string; priceAdjustment: number }[] }[];
+};
+
+/** PKR saved on a deal (0 when it isn't one) */
+function saving(item: { price: number; compareAtPrice?: number | null }): number {
+  return item.compareAtPrice && item.compareAtPrice > item.price ? item.compareAtPrice - item.price : 0;
+}
+
+/** "PKR 750", or for a deal "~PKR 2,050~ *PKR 1,650* · save 400" (WhatsApp formatting optional) */
+function priceText(item: { price: number; compareAtPrice?: number | null }, formatted = true): string {
+  const off = saving(item);
+  if (!off) return `PKR ${pkr(item.price)}`;
+  return formatted
+    ? `~PKR ${pkr(item.compareAtPrice!)}~ *PKR ${pkr(item.price)}* · 🔥 save ${pkr(off)}`
+    : `PKR ${pkr(item.price)} (was ${pkr(item.compareAtPrice!)}, save ${pkr(off)})`;
+}
+
+function isDealCategory(name: string): boolean {
+  return /deal|combo|offer|bundle|special/i.test(name);
+}
+
+/** Deals lead the menu, whatever their sort order */
+function dealsFirst<T extends { name: string }>(categories: T[]): T[] {
+  return [...categories.filter((c) => isDealCategory(c.name)), ...categories.filter((c) => !isDealCategory(c.name))];
+}
+
+/** Buy now's choices: the first options of each group that needs an answer, nothing optional */
+function standardOptions(item: MenuItemLike): SelectedModifier[] {
+  const picks: SelectedModifier[] = [];
+  for (const g of item.modifierGroups) {
+    const need = Math.max(g.minChoices, g.required ? 1 : 0);
+    for (const m of g.modifiers.slice(0, need)) {
+      picks.push({ groupId: g.id, modifierId: m.id, name: m.name, priceAdjustment: m.priceAdjustment });
+    }
+  }
+  return picks;
+}
+
+function standardOptionsText(item: MenuItemLike): string {
+  const picks = standardOptions(item);
+  return picks.length ? picks.map((m) => m.name).join(', ') : 'no extras';
+}
+
+/** An icon for an option, from its name (and its group, e.g. "Spice level: Medium") */
+function optionEmoji(name: string, groupName = ''): string {
+  const n = name.toLowerCase();
+  if (/spic|heat|chilli|chili/i.test(groupName) || /mild|medium|hot|spicy/.test(n)) {
+    if (/extra|very|super/.test(n)) return '🌶️';
+    if (/hot|spicy/.test(n)) return '🔥';
+    if (/medium/.test(n)) return '🟠';
+    if (/mild|no spice|plain/.test(n)) return '🟢';
+  }
+  if (/size|portion/i.test(groupName)) {
+    if (/small|regular|single/.test(n)) return '🔹';
+    if (/medium/.test(n)) return '🔷';
+    if (/large|family|double|xl/.test(n)) return '🟦';
+  }
+  const map: [RegExp, string][] = [
+    [/cheese/, '🧀'],
+    [/bacon/, '🥓'],
+    [/avocado/, '🥑'],
+    [/egg/, '🍳'],
+    [/mushroom/, '🍄'],
+    [/onion/, '🧅'],
+    [/jalape|chilli|chili|pepper/, '🌶️'],
+    [/tomato|ketchup/, '🍅'],
+    [/lettuce|salad|veg/, '🥬'],
+    [/sauce|mayo|dip/, '🥫'],
+    [/fries|chips|wedges/, '🍟'],
+    [/coke|cola|pepsi|sprite|fanta|7up|soda|drink|juice/, '🥤'],
+    [/water/, '💧'],
+    [/chicken|zinger/, '🍗'],
+    [/beef|patty|meat/, '🥩'],
+    [/bread|bun|naan/, '🍞'],
+    [/ice ?cream|dessert/, '🍨'],
+    [/coffee|tea/, '☕'],
+  ];
+  return map.find(([re]) => re.test(n))?.[1] ?? '▫️';
 }
 
 /** WhatsApp fetches media itself, so only public https links work */

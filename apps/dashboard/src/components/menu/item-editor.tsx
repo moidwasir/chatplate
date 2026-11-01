@@ -114,6 +114,7 @@ function DetailsForm({
     nameUrdu: item?.nameUrdu ?? '',
     description: item?.description ?? '',
     price: item ? paisaToRupees(item.price) : '',
+    compareAtPrice: item?.compareAtPrice ? paisaToRupees(item.compareAtPrice) : '',
     categoryId: item?.categoryId ?? categoryId,
     isActive: item?.isActive ?? true,
     limitedHours: Boolean(item?.servingStart),
@@ -134,6 +135,7 @@ function DetailsForm({
       nameUrdu: form.nameUrdu.trim() || null,
       description: form.description.trim() || null,
       price: rupeesToPaisa(form.price),
+      compareAtPrice: form.compareAtPrice ? rupeesToPaisa(form.compareAtPrice) : null,
       categoryId: form.categoryId,
       isActive: form.isActive,
       servingStart: form.limitedHours ? form.servingStart : null,
@@ -168,6 +170,16 @@ function DetailsForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Price (Rs)">
           <Input required type="number" min="0" step="1" value={form.price} onChange={(e) => set('price', e.target.value)} placeholder="650" />
+        </Field>
+        <Field label="Regular price (Rs)" hint="Deals only: customers see “save Rs X”">
+          <Input
+            type="number"
+            min="0"
+            step="1"
+            value={form.compareAtPrice}
+            onChange={(e) => set('compareAtPrice', e.target.value)}
+            placeholder="e.g. 2050"
+          />
         </Field>
         <Field label="Category">
           <select
