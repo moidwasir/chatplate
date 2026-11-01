@@ -1464,9 +1464,9 @@ function optionEmoji(name: string, groupName = ''): string {
     if (/mild|no spice|plain/.test(n)) return '🟢';
   }
   if (/size|portion/i.test(groupName)) {
-    if (/small|regular|single/.test(n)) return '🔹';
+    if (/small|regular|single|half/.test(n)) return '🔹';
     if (/medium/.test(n)) return '🔷';
-    if (/large|family|double|xl/.test(n)) return '🟦';
+    if (/large|family|double|xl|full/.test(n)) return '🟦';
   }
   const map: [RegExp, string][] = [
     [/cheese/, '🧀'],

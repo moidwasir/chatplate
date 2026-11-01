@@ -79,6 +79,14 @@
 | 40 | Settings: restaurant name and tax, branch details, opening hours, change password | ✅ |
 | 41 | Deploy, update PROJECT_STATUS.md | ✅ |
 
+**Part 7 goal:** a full demo menu with categories and photos
+
+| # | Task | Status |
+|---|---|---|
+| 42 | 10 categories, 42 items with options (sizes, portions, spice, drinks) and deal prices | ✅ |
+| 43 | Freely licensed photos (Wikimedia Commons), cropped 4:3, uploaded to Vercel Blob; credits file | ✅ |
+| 44 | Loaded into production through the API; Bacon add-on replaced (halal); Half/Full option icons | ✅ |
+
 ---
 
 ## 📋 Phase 0 — Setup & Design
