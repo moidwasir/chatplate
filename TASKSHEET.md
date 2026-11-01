@@ -89,6 +89,7 @@
 | 45 | Compact photo cards (name + price only) | ✅ |
 | 46 | Categories / category cards no longer ask Delivery or Pickup first; asked at checkout | ✅ |
 | 47 | Typed search: "pizza", "burger", "sandwich" open the category as cards; dishes match by name | ✅ |
+| 48 | Menu picture: generated photo grid of numbered categories + numbered list; type a number to open | ✅ |
 
 ---
 
