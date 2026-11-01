@@ -4,6 +4,8 @@ import { WhatsAppService } from './whatsapp.service';
 import { ConversationEngine } from './conversation.engine';
 import { SessionService } from './session.service';
 import { OrderNotifier } from './order-notifier';
+import { ChatsController } from './chats.controller';
+import { ChatsService } from './chats.service';
 import { MenuModule } from '../menu/menu.module';
 import { OrdersModule } from '../orders/orders.module';
 
@@ -12,12 +14,13 @@ import { OrdersModule } from '../orders/orders.module';
     MenuModule,
     OrdersModule,
   ],
-  controllers: [WhatsAppController],
+  controllers: [WhatsAppController, ChatsController],
   providers: [
     WhatsAppService,
     ConversationEngine,
     SessionService,
     OrderNotifier,
+    ChatsService,
   ],
   exports: [WhatsAppService],
 })

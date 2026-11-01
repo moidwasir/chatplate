@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@n
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto, PinLoginDto, RefreshDto } from './dto/auth.dto';
+import { ChangePasswordDto, LoginDto, PinLoginDto, RefreshDto } from './dto/auth.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { AuthUser } from './auth.types';
@@ -44,6 +44,15 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Body() dto: RefreshDto) {
     await this.authService.logout(dto.refreshToken);
+  }
+
+  /** Returns a new token pair; all other sessions are signed out */
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  changePassword(@Body() dto: ChangePasswordDto, @CurrentUser() user: AuthUser) {
+    return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
   @ApiBearerAuth()

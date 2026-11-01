@@ -27,11 +27,11 @@ const NAV: NavItem[] = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
   { href: '/menu', label: 'Menu', icon: UtensilsCrossed },
   { href: '/orders', label: 'Orders', icon: ShoppingBag },
-  { href: '/chats', label: 'WhatsApp chats', icon: MessageCircle, soon: 'Phase 2' },
-  { href: '/customers', label: 'Customers', icon: Users, soon: 'Phase 2' },
+  { href: '/chats', label: 'WhatsApp chats', icon: MessageCircle },
+  { href: '/customers', label: 'Customers', icon: Users },
   { href: '/delivery', label: 'Delivery', icon: Bike },
-  { href: '/reports', label: 'Reports', icon: BarChart3, soon: 'Phase 5' },
-  { href: '/settings', label: 'Settings', icon: Settings, soon: 'Later' },
+  { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {

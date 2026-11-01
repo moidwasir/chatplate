@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -131,6 +131,28 @@ export class AuthService {
   async logout(rawToken: string): Promise<void> {
     const record = await this.findRefreshToken(rawToken).catch(() => null);
     if (record) await this.revokeFamily(record.familyId);
+  }
+
+  /**
+   * Change the signed-in user's password. Every other device is signed out;
+   * the caller gets a fresh session so this one stays signed in.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<TokenPair> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { branchAccess: { select: { branchId: true } } },
+    });
+    if (!user?.passwordHash || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      // 400, not 401: the dashboard treats 401 as an expired session
+      throw new BadRequestException('Current password is wrong');
+    }
+    if (currentPassword === newPassword) throw new BadRequestException('Choose a different password');
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: userId }, data: { passwordHash: await bcrypt.hash(newPassword, 12) } }),
+      this.prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
+    return this.startSession(user);
   }
 
   async me(userId: string) {

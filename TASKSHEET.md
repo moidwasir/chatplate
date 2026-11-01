@@ -69,6 +69,16 @@
 | 35 | Bot: out-of-area reply says the distance and how far we deliver | ✅ |
 | 36 | Deploy, update PROJECT_STATUS.md | ✅ |
 
+**Part 6 goal:** turn the "Soon" pages into working screens
+
+| # | Task | Status |
+|---|---|---|
+| 37 | WhatsApp chats: conversation list, message thread, staff reply, take over / hand back to bot | 🔄 |
+| 38 | Customers: search, order count and spend, profile with addresses, orders and notes, block | ⏳ |
+| 39 | Reports: sales by day, busiest hours, top items, delivery vs pickup, date range | ⏳ |
+| 40 | Settings: restaurant name and tax, branch details, opening hours, change password | ⏳ |
+| 41 | Deploy, update PROJECT_STATUS.md | ⏳ |
+
 ---
 
 ## 📋 Phase 0 — Setup & Design
