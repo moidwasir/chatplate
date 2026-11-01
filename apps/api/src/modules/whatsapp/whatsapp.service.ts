@@ -165,6 +165,13 @@ export class WhatsAppService {
         data: { status: newStatus },
       });
       this.logger.debug(`Message ${waMessageId} status updated to "${newStatus}"`);
+      if (newStatus === 'failed') {
+        // Meta explains why (e.g. 131047 outside the 24 h window, 131026 undeliverable)
+        const reasons = (status?.errors ?? [])
+          .map((e: any) => `${e?.code} ${e?.title ?? ''}${e?.error_data?.details ? `: ${e.error_data.details}` : ''}`)
+          .join('; ');
+        this.logger.error(`WhatsApp could not deliver ${waMessageId} to ${status?.recipient_id}: ${reasons || 'no reason given'}`);
+      }
     } catch (err: any) {
       this.logger.error(
         `Failed to update message status for ${waMessageId}: ${err?.message}`,

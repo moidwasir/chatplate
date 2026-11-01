@@ -189,12 +189,17 @@ export class ConversationEngine {
   private async route(phone: string, s: WaSession, input: Input, idleMs: number): Promise<void> {
     // Staff is handling this chat; after 30 idle minutes the bot takes over again
     if (s.state === ConversationState.HUMAN_HANDOVER) {
-      if (idleMs < SESSION_IDLE_MS) {
+      // The customer can always come back to ordering: any button, "menu", "hi"…
+      const backToBot =
+        !!input.id || (!!input.text && (RESTART_WORDS.includes(input.text) || FULL_MENU_TEXT.test(input.text)));
+      if (idleMs < SESSION_IDLE_MS && !backToBot) {
         await this.save(phone, s);
         return;
       }
       await this.setHandledBy(s, 'BOT');
-      return this.startGreeting(phone, s);
+      s.state = ConversationState.GREETING;
+      if (!backToBot) return this.startGreeting(phone, s);
+      // Fall through and handle what they just sent
     }
 
     // Answers to the "continue where you left off?" prompt
@@ -1208,7 +1213,7 @@ export class ConversationEngine {
     s.state = ConversationState.HUMAN_HANDOVER;
     await this.save(phone, s);
     await this.setHandledBy(s, 'HUMAN');
-    await this.send(phone, s, buildText(phone, '👤 Connecting you to our staff... Someone will be with you shortly!'));
+    await this.send(phone, s, buildText(phone, '👤 Connecting you to our staff... Someone will be with you shortly!\n\nWant to order instead? Type *menu* anytime.'));
   }
 
   private async sendTrackingInfo(phone: string, s: WaSession): Promise<void> {
