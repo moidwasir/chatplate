@@ -221,7 +221,7 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 |---|---|
 | 1. Greeting | Uses the WhatsApp profile name ("Welcome" for new customers, "Welcome back" for returning ones). If closed, says when it opens next. Buttons: View Menu · Order Now · Track Order (WhatsApp allows 3); the footer says to type "help" for staff |
 | 2. Order type | Delivery or Pickup (opening hours are checked again here) |
-| 3. Menu | The first time in an order, the **full menu** is sent as one formatted message (category emoji headings, items, prices, short descriptions, "Customisable" marker; split into several messages past ~3,800 chars). Then a category list ("🍔 Burgers · 3 items · from PKR 750") with a **📋 Full menu** row → item list. Long menus page with "➡️ More categories / More items". A photo is sent if the item has a public `https://` image |
+| 3. Menu | The first time in an order, the **full menu** is sent as one formatted message (category emoji headings, items, prices, short descriptions, "Customisable" marker; split into several messages past ~3,800 chars). Then a category list ("🍔 Burgers · 3 items · from PKR 750") with a **📋 Full menu** row → item list. Long menus page with "➡️ More categories / More items". **Photo cards:** when every item in a category has a public `https` photo, items arrive as a swipeable WhatsApp **carousel** (2–10 cards per page, each with **➕ Add**), followed by Categories / More items / View cart buttons; a one-item category with a photo gets a single photo message with Add. Falls back to the text list if WhatsApp refuses. Photos upload to Vercel Blob in production |
 | 4. Item | One question per option group (required / optional / multi-choice up to `maxChoices`), then quantity (buttons 1–3, or type up to 20) |
 | 5. Cart | Lines with options and totals · Checkout · Add More · Clear. Same item + same options are merged |
 | 6. Address | Saved addresses offered as a list, or a new pin (saved, first one becomes default). Zone check (polygon), fee (flat / per-km / free above), minimum order. Outside the zone → offer Pickup |
@@ -234,7 +234,7 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 
 **Sessions:** Redis key `wa:session:<phone>`, kept 24 h. After 30 min idle with items in the cart the customer is asked "Continue / Start over". State and cart are mirrored to the `Conversation` row; every inbound and outbound message is stored in `Message`.
 
-**Known gaps:** branch selector (always uses the first active branch); no photo carousel (needs photos on S3 and a live Meta number to test, see Next steps); no free-text ordering ("1 chicken burger and a coke"); no free-text item notes; no "edit a cart line"; no upsell; no Urdu text yet; status updates are free-form messages, so they only reach the customer within 24 h of their last message (Meta rule). Approved templates are needed for anything later.
+**Known gaps:** branch selector (always uses the first active branch); no free-text ordering ("1 chicken burger and a coke"); no free-text item notes; no "edit a cart line"; no upsell; no Urdu text yet; status updates are free-form messages, so they only reach the customer within 24 h of their last message (Meta rule). Approved templates are needed for anything later.
 
 ---
 
