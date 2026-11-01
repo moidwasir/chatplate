@@ -53,11 +53,21 @@
 
 | # | Task | Status |
 |---|---|---|
-| 27 | API: process WhatsApp webhooks and order updates directly (no Bull queue) | 🔄 |
-| 28 | API: Socket.IO only when running as a normal server; Vercel entry point; photo uploads fail clearly without S3 | ⏳ |
-| 29 | Dashboard: live updates by polling a lightweight "what changed" endpoint | ⏳ |
-| 30 | Vercel: Neon Postgres + Upstash Redis, two projects (api, dashboard), env vars, migrate + seed | ⏳ |
-| 31 | Deploy, test end to end, give the WhatsApp callback URL; update PROJECT_STATUS.md | ⏳ |
+| 27 | API: process WhatsApp webhooks and order updates directly (no Bull queue) | ✅ |
+| 28 | API: Socket.IO only when running as a normal server; Vercel entry point; photo uploads fail clearly without S3 | ✅ |
+| 29 | Dashboard: live updates by polling a lightweight "what changed" endpoint | ✅ |
+| 30 | Vercel: Neon Postgres + Upstash Redis, two projects (api, dashboard), env vars, migrate + seed | ✅ |
+| 31 | Deploy, test end to end, give the WhatsApp callback URL; update PROJECT_STATUS.md | ✅ |
+
+**Part 5 goal:** the owner controls where the bot delivers
+
+| # | Task | Status |
+|---|---|---|
+| 32 | Zones can be a radius around the restaurant (polygon optional, migration) | ✅ |
+| 33 | API: `/delivery` (restaurant pin, add/edit/delete zones) | ✅ |
+| 34 | Dashboard: Delivery page (use my location / Maps link, zones with fee, minimum, free above) | ✅ |
+| 35 | Bot: out-of-area reply says the distance and how far we deliver | ✅ |
+| 36 | Deploy, update PROJECT_STATUS.md | ✅ |
 
 ---
 

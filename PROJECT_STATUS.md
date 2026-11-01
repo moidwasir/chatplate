@@ -2,7 +2,7 @@
 
 > **Product:** ChatPlate, WhatsApp ordering for restaurants (*Your restaurant, on WhatsApp*)
 > **First client:** Safi Food & Beverage (restaurant data in the database is still "Safi Restaurant")
-> **Last updated:** Nov 1, 2026 (Phase 2 session)
+> **Last updated:** Nov 1, 2026 (Phase 2 session, live on Vercel + Meta test number, Delivery page)
 > **Current phase:** Phase 2 (WhatsApp engine): customers order by chat (COD), staff accept and progress orders on the dashboard, and the customer gets a WhatsApp message at every step. Phase 1 leftovers still open
 > **Roadmap / checkboxes:** [TASKSHEET.md](./TASKSHEET.md)
 
@@ -94,14 +94,18 @@ The seed branch opens 11:00–23:30 Pakistan time and is closed on Tuesdays. To 
 | API | https://chatplate-api.vercel.app/v1 (project `chatplate-api`, root `apps/api`, entry `apps/api/api/index.js` → `src/serverless.ts`) |
 | WhatsApp callback URL | `https://chatplate-api.vercel.app/v1/webhooks/whatsapp` |
 | Postgres | Neon `chatplate-db` (Vercel Marketplace); migrations run in `apps/api/scripts/vercel-build.sh` over `DATABASE_URL_UNPOOLED`; runtime uses `POSTGRES_PRISMA_URL` |
-| Redis | Upstash `chatplate-redis`, **pending** marketplace terms acceptance (needed for WhatsApp chat sessions) |
+| Redis | Upstash `chatplate-redis` (`REDIS_URL`): WhatsApp chat sessions and the per-customer lock |
 | Photos | Vercel Blob `chatplate-photos` (`BLOB_READ_WRITE_TOKEN`), public https URLs |
 
 How it differs from the local server: no Bull queue (webhooks and status updates are handled within the request; a per-customer Redis lock keeps one customer's messages in order), no Socket.IO (the dashboard polls `GET /orders/changes` every 4 s; the Socket.IO gateway still runs locally for future KDS/POS). Production was seeded with a generated owner password and cashier PIN (`SEED_OWNER_PASSWORD`, `SEED_CASHIER_PIN`), not the dev defaults. Deploy from the **repo root** with `VERCEL_ORG_ID`/`VERCEL_PROJECT_ID` from `apps/*/.vercel/project.json` (deploying from the app folder uploads only that folder). `.vercelignore` keeps `.env` and build output out of uploads.
 
 ### Connecting the real WhatsApp number
 
-Plan: reuse **+92 304 5945496** (already in the Mavon business portfolio, previously JobsChance's test number, display name still "JobsChance", limit 250 customers/24 h). After filling the WhatsApp values in `.env`, run:
+**Live right now:** production answers on Meta's **test number +1 555 130 6206** (`WHATSAPP_PHONE_NUMBER_ID=1370318612837593`, WABA `1118927337786502`, app *ChatPlate*, published, webhook subscribed). A test number only messages phones on its allowed-recipient list (error 131030 otherwise). `WHATSAPP_ACCESS_TOKEN` on Vercel is a **60-day user token, valid until 31 Dec 2026**, made from a Try-it-out token with `oauth/access_token?grant_type=fb_exchange_token`; changing the Facebook password or logging out everywhere kills it early. The permanent system-user token can't reach the test number (Authorization Error), so it's kept for the real number.
+
+**+92 304 5945496** (WABA `2269031623865012`, phone ID `1231970406673533`, the values in local `.env`) is **disconnected**: registering with PIN fails (133010) because its verification expired. It needs the SIM: request + verify a code, then `/register` with the PIN, then switch the Vercel env back to the +92 IDs and the system-user token. Display name is still "JobsChance".
+
+Original plan: reuse **+92 304 5945496** (already in the Mavon business portfolio, previously JobsChance's test number, display name still "JobsChance", limit 250 customers/24 h). After filling the WhatsApp values in `.env`, run:
 
 ```bash
 cd apps/api && pnpm wa:check                                         # token, number, registration, which apps get its webhooks, local webhook
@@ -118,7 +122,7 @@ The API only handles webhooks addressed to `WHATSAPP_PHONE_NUMBER_ID` (other num
 | Owner | Dashboard / `POST /v1/auth/login` | `owner@safi.pk` / `changeme123` |
 | Cashier | `POST /v1/auth/pin-login` | branch `seed-branch-001`, PIN `1234` |
 
-⚠️ Change these before any shared or staging deployment.
+⚠️ These are the **local dev** defaults. Production (Vercel) was seeded with a generated owner password and cashier PIN; they are not in the repo.
 
 ---
 
@@ -194,8 +198,17 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | GET | `/orders/:id` | Full order with `statusHistory[].changedByName` (staff name, or "Customer (WhatsApp)") |
 | PATCH | `/orders/:id/status` | `{ status, reason?, estimatedMinutes? }` (validated DTO). Enforces allowed transitions; Out for delivery / Delivered only for delivery orders, Picked up only for pickup; `reason` required to cancel; `estimatedMinutes` (5–180) saved on accept. Two simultaneous changes → the second gets 409. WhatsApp orders queue an `order-status` job that messages the customer. `changedBy` comes from the token |
 
+### Delivery (OWNER/MANAGER)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/delivery?branchId=` | `{ branch: { id, name, address, lat, lng }, zones }` |
+| PATCH | `/delivery/branch/:branchId` | `{ lat, lng, address? }`: the restaurant pin distances are measured from |
+| POST | `/delivery/zones` | `{ branchId, name, radiusKm (0.5–100), feeType FLAT\|PER_KM, flatFee?/perKmFee? (required for its type), freeAbove?, minOrder?, isActive? }`, money in paisa. Creates a radius zone |
+| PATCH | `/delivery/zones/:id` | Same fields, all optional. Sending `radiusKm` turns a drawn-shape zone into a radius zone |
+| DELETE | `/delivery/zones/:id` | |
+
 ### Other
-`GET /health` · `GET /webhooks/whatsapp` (Meta verify challenge) · `POST /webhooks/whatsapp` (messages + delivery statuses; 401 on a bad signature, 5xx if the queue is down so Meta retries) · Swagger UI at `/docs` (non-production) · uploaded files at `/uploads/*` (local storage mode)
+`GET /health` · `GET /webhooks/whatsapp` (Meta verify challenge) · `POST /webhooks/whatsapp` (messages + delivery statuses, processed within the request; 401 on a bad signature, 5xx if processing fails so Meta retries) · Swagger UI at `/docs` (non-production) · uploaded files at `/uploads/*` (local storage mode)
 
 ---
 
@@ -208,8 +221,9 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | `/orders` Orders management | **Left panel:** search (order #, name, phone), views with live counts (Live board · All · New · Accepted · Preparing · Ready · Out for delivery · Completed · Cancelled; New is highlighted when waiting), date (Today / Yesterday / 7 / 30 days / All / pick a day), type (Delivery / Pickup), and a summary (orders, sales, average order, cancelled). **Live board:** every open order in three scrolling columns, compact cards with item summary, progress bar and Accept/Reject or next-step button; new orders waiting 5+ min turn red. **List views:** table with progress bars, 50 per page. Filters are in the URL (bookmarkable, Back works) |
 | Order panel | Click any order (board, list or Overview) → right-hand panel: step-by-step progress with times, actions, customer (call, open WhatsApp chat, map link), items with options and prices, totals, payment, history with who did each step. Updates live |
 | `/menu` Menu Manager | Categories (add/rename/hide/reorder/delete); items (price, Urdu name, description, serving hours, visibility, in-stock toggle, photo); option groups and options with extra prices |
+| `/delivery` Delivery | **Restaurant location** (use my current location, or paste coordinates / a Google Maps link; "Check on map") and **delivery zones**: name, deliver up to N km, flat fee or per-km fee, minimum order, free delivery above, on/off, edit, delete. Warns when no zone is active. Zones from the old fixed shape are marked "Drawn area" and become radius zones when edited |
 | Top bar | Branch switcher (multi-branch users), **API** and **Live updates** status dots, 🔔 new-order sound toggle, sign out. Every page plays a chime and shows a pop-up for a new order (sound works after the first click on the page, a browser rule) |
-| Sidebar | Chats, Customers, Delivery, Reports, Settings are shown as "Soon" with their phase |
+| Sidebar | Chats, Customers, Reports, Settings are shown as "Soon" with their phase |
 
 ---
 
@@ -225,13 +239,13 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | 4. Item | **⚡ Buy now** (on photo cards, and before the questions for items with options) adds 1 with the standard choices (first option of every required group, no paid extras) and goes straight to checkout. **➕ Add to cart / 🛠️ Choose options**: one question per option group; up to 3 choices are **tap buttons with icons** (🟢 Mild 🟠 Medium 🔥 Hot, 🧀 🥓 🥑…), more use a list with icons; then quantity (buttons 1–3, or type up to 20). Tapping an item before choosing delivery/pickup asks that first, then continues |
 | Deals | Items can have a **regular price** (`Item.compareAtPrice`, migration `20261101092450_item_compare_at_price`); WhatsApp shows ~~PKR 2,050~~ **PKR 1,650** · 🔥 save 400. Categories named Deal/Combo/Offer/Bundle/Special are listed first with 🔥 and "save up to". Live example: Deals → Burger Duo Deal, Solo Meal Deal (each with a required drink choice) |
 | 5. Cart | Lines with options and totals · Checkout · Add More · Clear. Same item + same options are merged |
-| 6. Address | Saved addresses offered as a list, or a new pin (saved, first one becomes default). Zone check (polygon), fee (flat / per-km / free above), minimum order. Outside the zone → offer Pickup |
+| 6. Address | Saved addresses offered as a list, or a new pin (saved, first one becomes default). Zone check: a **radius** around the restaurant pin (set on the Delivery page; overlapping zones → the smallest wins) or an older drawn polygon; fee (flat / per-km / free above), minimum order. Outside every zone → "that pin is 12.3 km from us and we deliver up to 8 km" + Switch to Pickup / Other location. Without a restaurant pin, radius zones match nothing |
 | 7. Tip + summary | No tip / 5% / 10% / typed amount (up to the subtotal). Summary shows subtotal, 17% tax, delivery fee, tip, total, calculated exactly as the order will be |
 | 8. Confirm | Cart is re-checked against the live menu (removed items / price changes are reported and the customer re-confirms) and the order is created as COD with payment PENDING |
 | 9. Received | "📥 Order Received": order number and total, "the restaurant will confirm it shortly". The `order.created` socket event reaches the dashboard |
-| 10. Status updates | Sent when staff move the order ([order-notifier.ts](apps/api/src/modules/whatsapp/order-notifier.ts)): ✅ Confirmed (with the prep time) · 👨‍🍳 Preparing · 📦 Ready (delivery) / 🎉 Ready for pickup at *branch* · 🛵 On the way · ✅ Delivered / Collected · ❌ Cancelled with the reason. Queued on the WhatsApp queue, 5 retries; saved on the customer's latest conversation |
+| 10. Status updates | Sent when staff move the order ([order-notifier.ts](apps/api/src/modules/whatsapp/order-notifier.ts)): ✅ Confirmed (with the prep time) · 👨‍🍳 Preparing · 📦 Ready (delivery) / 🎉 Ready for pickup at *branch* · 🛵 On the way · ✅ Delivered / Collected · ❌ Cancelled with the reason. Sent right after the status change (failures are logged with Meta's reason, the status change still succeeds); saved on the customer's latest conversation |
 
-**Works from any step:** `hi`/`hello`/`salam`/`menu`/`start` → main menu (cart kept) · "show me the menu", "full menu", "price list" → full menu, then back to where they were · `help`/`staff` → Talk to Staff · `cancel`/`stop` → empty cart · Talk to Staff → bot goes silent and the conversation is marked `handledBy = HUMAN` (bot resumes after 30 min of silence) · anything unrecognised → help reply with "Show options" and "Talk to Staff".
+**Works from any step:** `hi`/`hello`/`salam`/`start`/`order` → main menu (cart kept) · `menu`, "menu dikhao/bhejo", "show me the menu", "price list", "kya kya hai", 📋 View Menu → the **photo menu** (carousel of up to 10 photo cards, deals first, ⚡ Buy now / ➕ Add to cart; or category cards; text price list as fallback), then back to where they were · `help`/`staff` → Talk to Staff · `cancel`/`stop` → empty cart · Talk to Staff → bot goes silent and the conversation is marked `handledBy = HUMAN` (the customer gets "type *menu* anytime"; any button tap or hi/menu hands the chat back to the bot; otherwise it resumes after 30 min of silence) · anything unrecognised → help reply with "Show options" and "Talk to Staff".
 
 **Sessions:** Redis key `wa:session:<phone>`, kept 24 h. After 30 min idle with items in the cart the customer is asked "Continue / Start over". State and cart are mirrored to the `Conversation` row; every inbound and outbound message is stored in `Message`.
 
@@ -272,18 +286,20 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | 6 | No ESLint config; no automated tests (Jest isn't installed) | `lint`/`test` scripts don't run | Phase 1 cleanup / Phase 6 |
 | 7 | Order numbers come from `count + 1` | Two orders at the same moment can collide; the second customer gets "could not place your order — Try again" | Phase 3, Order Service |
 | 8 | Two browser tabs refreshing at the same moment can trip reuse detection | User gets logged out | Acceptable for now; revisit with cookie-based refresh |
-| 9 | Item photos in local-storage mode are `http://localhost` URLs | Meta can't fetch them, so the bot only sends photos stored on S3 (`https://`) | Configure S3 before go-live |
+| 9 | Item photos in local-storage mode are `http://localhost` URLs | Meta can't fetch them, so photo cards only appear for `https` photos (Vercel Blob in production) | Fine in production; use Blob/S3 locally to test photos |
 | 10 | `packages/*/src` contain stale committed `.js`/`.d.ts` build files | Confusing; the real build output is `dist/` | Delete them in a cleanup commit |
 | 11 | Dev database holds test data: orders `ORD-000001`–`ORD-000004`, customers `92333999000x`, `923001234567`, `923009990001`, `923009990002` | Shows up on the dashboard | Delete, or re-seed, whenever convenient |
 | 12 | Delivered / picked-up COD orders keep payment **PENDING** | Cash collected isn't recorded anywhere yet | Rider app / cash-up screen (Phase 3–5) |
 | 13 | Status messages are free-form text | Meta rejects them more than 24 h after the customer's last message | Approved templates (Phase 3.3) |
+| 14 | Production uses a 60-day user token on the Meta **test** number | Bot stops replying on 31 Dec 2026 (or earlier if the Facebook session is reset); only allow-listed phones can order | Re-verify +92 304 5945496 with the SIM and switch to the permanent system-user token |
+| 15 | Secrets (system token, app secret, test tokens) were pasted into chat during setup | Could be misused | Rotate the app secret and system-user token in Meta, update Vercel env |
 
 ---
 
 ## 9. Database changes
 
 - **Phase 1:** new model `RefreshToken` (migration `20261031204614_auth_refresh_tokens`). Seed also creates **Demo Cashier** (`+923000000001`, PIN `1234`).
-- **Phase 2 (this session):** no schema changes. The bot uses the existing `Conversation`, `Message`, `Address`, `DeliveryZone` and `OpeningHour` models.
+- **Phase 2:** `Item.compareAtPrice Int?` for deal savings (migration `20261101092450_item_compare_at_price`); `DeliveryZone.polygon` is now **optional**: empty means "within `maxDistance` km of the branch" (migration `20261101140000_delivery_zone_radius`). The seed now creates an 8 km radius zone instead of the fixed Lahore rectangle. Migrations run automatically in the Vercel API build.
 - **Behaviour change:** COD payments are now created as **PENDING** (they were PAID). Counter (POS) sales are still PAID.
 - **Order statuses:** no schema change. `estimatedMinutes` is now set by staff when accepting.
 
@@ -328,6 +344,8 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
   - API: list paging (2 per page → total 4), status list, type filter, date range, search by name and by `0300…` phone, `pageSize` > 200 rejected, stats per status with sales and average, history with staff names.
   - Bot (simulator): new greeting buttons and footer; View Menu → formatted full menu → delivery/pickup question; category rows with emoji and "from PKR"; "show me your full menu" typed mid-order; `help` → staff.
   - Dashboard TypeScript compiles; `/orders`, `/orders?view=all&range=7d` and `/` load (200).
+- **Live on Meta + Vercel (Nov 1):** real order placed from a phone through the test number; status messages arrived; carousel with photo cards verified (cards need `"type":"button"`; Unsplash photos load, Wikimedia ones were refused); handover exit works; 60-day token checked against the test number (CONNECTED).
+- **Delivery page (Nov 1):** API and dashboard compile; radius quoting checked (3 km zone beats 10 km for a close pin, 10 km for a farther one, out-of-zone returns the distance 31.1 km, no restaurant pin → out); `/v1/delivery` 401 without login; `/delivery` page 200 after deploy. Not yet clicked through in a browser.
 - **Not yet verified:**
   - Clicking through the dashboard in a real browser end to end (board, list, filters, order panel, chime, pop-up).
   - Menu paging with a real-sized menu (seed has 2 items).
@@ -350,15 +368,16 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
    - approved WhatsApp templates for status updates sent after the 24 h window;
    - record COD cash as collected when an order is delivered (issue #12);
    - assign a rider from the order panel.
-3. **WhatsApp menu with photos (like the reference screenshots):**
-   - set up S3 so item photos have public `https://` links (needed for any photo on WhatsApp);
-   - swipeable photo cards with an "Add" button: Meta's free-form interactive carousel isn't clearly documented yet (only template carousels are), so build and test it once a real Meta number is connected; alternatively a Meta catalog (multi-product message, native cart);
+3. **Delivery setup (owner, now):** on the dashboard **Delivery** page, set the restaurant location and edit "City Zone" to the real radius and fee; production still has the old fixed Lahore rectangle until then, which rejects most pins.
+   - later: draw zones on a map; test a pin from the page.
 4. **AI ordering:** understand free text like "I want a chicken burger and a coke" and fill the cart (LLM + menu matching), falling back to the buttons.
 5. **Phase 1 leftovers:**
    - scaffold `apps/pos`, `apps/kds`, `apps/rider`;
    - ESLint config;
    - staging VPS + SSL (needs Hostinger access).
-6. **Waiting on the restaurant:**
+6. **Waiting on the restaurant / owner:**
+   - SIM for +92 304 5945496 to re-verify and register it, then switch production off the test number;
+   - rotate the Meta secrets shared during setup;
    - Meta Business verification and WhatsApp number (then we can test with real messages);
    - message templates;
    - menu data and photos.
