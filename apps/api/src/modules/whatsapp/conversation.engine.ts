@@ -42,6 +42,14 @@ const FULL_MENU_TEXT =
 /** WhatsApp text messages are capped at 4096 characters */
 const MAX_TEXT_CHARS = 3800;
 const CANCEL_WORDS = ['cancel', 'stop'];
+/** Empty the cart and start again: "cart clear", "clear my cart", "new order", "start over"… */
+const CLEAR_CART_TEXT =
+  /^(reset|start over|start again|new order)$|\b(clear|empty|delete|remove|khali|saaf)\b.*\b(cart|basket|order)\b|\b(cart|basket)\b.*\b(clear|empty|delete|khali|saaf)\b|\b(new|naya|nayi|fresh) order\b|\bstart (over|again|new|fresh)\b/;
+/** Show the cart: "cart", "my cart", "show cart", "cart dikhao"… */
+const VIEW_CART_TEXT = /^(my )?(cart|basket)$|\b(show|see|view|check|open)\b.*\b(cart|basket)\b|\b(cart|basket)\b.*\b(dikhao|dikha|show|please|plz)\b|^what('?s| is) in my (cart|basket)/;
+/** Asking where the restaurant is: "what is location of your hotel", "your address?", "aap kahan ho" */
+const WHERE_ARE_YOU_TEXT =
+  /\b(location|address|where|directions?)\b.*\b(you|your|restaurant|hotel|shop|branch|outlet|aap|apka|aapka)\b|\b(your|restaurant|hotel|shop|branch)\b.*\b(location|address)\b|\bkahan\b|\bkidhar\b|^(location|address)\??$/;
 /** Text that hands the chat to a person (the greeting's footer points here) */
 const STAFF_WORDS = ['help', 'staff', 'agent', 'human', 'talk to staff'];
 /** Filler words ignored when searching the menu ("I need 2 pizzas please") */
@@ -223,8 +231,17 @@ export class ConversationEngine {
       return this.startGreeting(phone, s);
     }
 
-    // Back after a long break mid-order: offer to continue
-    if (idleMs >= SESSION_IDLE_MS && s.cart.length > 0 && s.state !== ConversationState.GREETING) {
+    // Commands that work from any step, even after a long break or mid-question
+    const text = input.text && !input.id ? input.text : '';
+    if (input.id === 'cart_clear' || input.id === 'order_new' || (text && CLEAR_CART_TEXT.test(text))) {
+      return this.startNewOrder(phone, s);
+    }
+    if (text && VIEW_CART_TEXT.test(text)) return this.showCart(phone, s);
+    if (text && WHERE_ARE_YOU_TEXT.test(text)) return this.sendRestaurantLocation(phone, s);
+    const wantsMenu = input.id === 'menu_full' || (!!text && FULL_MENU_TEXT.test(text));
+
+    // Back after a long break mid-order: offer to continue (unless they asked for the menu)
+    if (!wantsMenu && idleMs >= SESSION_IDLE_MS && s.cart.length > 0 && s.state !== ConversationState.GREETING) {
       await this.save(phone, s);
       const count = s.cart.reduce((n, i) => n + i.quantity, 0);
       await this.send(
@@ -241,7 +258,7 @@ export class ConversationEngine {
       );
       return;
     }
-    if (idleMs >= SESSION_IDLE_MS) return this.startGreeting(phone, s);
+    if (!wantsMenu && idleMs >= SESSION_IDLE_MS) return this.startGreeting(phone, s);
 
     // Keywords work from any step
     if (input.text && RESTART_WORDS.includes(input.text)) return this.startGreeting(phone, s);
@@ -263,8 +280,9 @@ export class ConversationEngine {
     }
     const customise = stripPrefix(input.id, 'opt_');
     if (customise) return this.startItemOptions(phone, s, customise);
+    // A question is waiting for an answer (the cart isn't a question: View cart sits under the menu)
     const midOrder =
-      s.state === ConversationState.ITEM_DETAIL || s.state === ConversationState.CART ||
+      s.state === ConversationState.ITEM_DETAIL ||
       s.state === ConversationState.ADDRESS || s.state === ConversationState.TIP ||
       s.state === ConversationState.PAYMENT;
     // "View Menu" / "menu dikhao": photo cards to browse and buy from
@@ -482,7 +500,7 @@ export class ConversationEngine {
       s,
       buildList(
         phone,
-        `🍽️ What are you in the mood for? Tap *View Categories*, or type a number or a dish (e.g. *pizza*).${shownExtras.length < extras.length ? '\nType *price list* to see every price.' : ''}`,
+        `🍽️ What are you in the mood for? Tap *View Categories*, or type a number or a dish (e.g. *pizza*).${shownExtras.length < extras.length ? '\nType *price list* to see every price.' : ''}${s.cart.length > 0 && !shownExtras.some((x) => x.id === 'cart_view') ? `\n🛒 Your cart: ${s.cart.reduce((n, i) => n + i.quantity, 0)} item(s), PKR ${pkr(cartSubtotal(s.cart))}. Type *cart* to see it.` : ''}`,
         [
           { title: 'Categories', rows },
           ...(shownExtras.length ? [{ title: 'More', rows: shownExtras }] : []),
@@ -507,11 +525,12 @@ export class ConversationEngine {
 
     let carousel: ReturnType<typeof buildCarousel> | null = null;
     if (photoItems.length >= 2 && photoItems.length <= CAROUSEL_MAX_CARDS) {
+      const photos = await this.menuGrid.squareUrls(photoItems.map((i) => i.imageUrl!));
       carousel = buildCarousel(
         phone,
         `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and tap *⚡ Buy now* or *➕ Add to cart*.`,
-        photoItems.map((item) => ({
-          imageUrl: item.imageUrl!,
+        photoItems.map((item, i) => ({
+          imageUrl: photos[i],
           text: cardText(item),
           buttons: [
             { id: `buy_${item.id}`, title: '⚡ Buy now' },
@@ -796,14 +815,15 @@ export class ConversationEngine {
     const next = current + 1 < pages ? current + 1 : null;
 
     await this.save(phone, s);
+    const photos = await this.menuGrid.squareUrls(items.map((i) => i.imageUrl!));
     const sent = await this.send(
       phone,
       s,
       buildCarousel(
         phone,
         `${categoryEmoji(category.name)} *${category.name}*${pages > 1 ? ` (${current + 1}/${pages})` : ''}\nSwipe to see everything 👉`,
-        items.map((item) => ({
-          imageUrl: item.imageUrl!,
+        items.map((item, i) => ({
+          imageUrl: photos[i],
           text: cardText(item),
           buttons: [
             { id: `buy_${item.id}`, title: '⚡ Buy now' },
@@ -1082,10 +1102,6 @@ export class ConversationEngine {
     switch (input.id) {
       case 'cart_checkout':
         return this.checkout(phone, s);
-      case 'cart_clear':
-        s.cart = [];
-        await this.send(phone, s, buildText(phone, "🗑️ Cart cleared! Let's start fresh."));
-        return this.sendCategoryMenu(phone, s);
       default:
         return this.showCart(phone, s);
     }
@@ -1161,6 +1177,24 @@ export class ConversationEngine {
       return this.applyAddress(phone, s, address.id, lat, lng, text);
     }
 
+    // Typed text: we need a map pin, so explain how, and offer a way out
+    if (input.text) {
+      await this.send(
+        phone,
+        s,
+        buildButtons(
+          phone,
+          '📍 To deliver, we need your location pin (typed addresses can\'t be checked against our delivery area).\n\n' +
+            'Tap the button above to pick or send your location, or tap 📎 → *Location* → *Send your current location*.\n\nOr:',
+          [
+            { id: 'type_pickup', title: '🏃 Switch to Pickup' },
+            { id: 'cart_view', title: '🛒 View cart' },
+            { id: 'order_new', title: '🗑️ New order' },
+          ],
+        ),
+      );
+      return;
+    }
     return this.askAddress(phone, s);
   }
 
@@ -1378,6 +1412,31 @@ export class ConversationEngine {
     await this.save(phone, s);
     await this.setHandledBy(s, 'HUMAN');
     await this.send(phone, s, buildText(phone, '👤 Connecting you to our staff... Someone will be with you shortly!\n\nWant to order instead? Type *menu* anytime.'));
+  }
+
+  /** Empty the cart and show the menu straight away */
+  private async startNewOrder(phone: string, s: WaSession): Promise<void> {
+    const had = s.cart.reduce((n, i) => n + i.quantity, 0);
+    this.resetOrder(s);
+    s.state = ConversationState.GREETING;
+    await this.save(phone, s);
+    await this.send(phone, s, buildText(phone, had ? `🗑️ Cart cleared (${had} item${had !== 1 ? 's' : ''} removed). Let's start a new order! 👇` : "🆕 Let's start a new order! 👇"));
+    return this.sendVisualMenu(phone, s);
+  }
+
+  /** Where the restaurant is, then back to whatever we were asking */
+  private async sendRestaurantLocation(phone: string, s: WaSession): Promise<void> {
+    const branch = await this.prisma.branch.findUnique({ where: { id: s.branchId }, include: { restaurant: true } });
+    const map = branch?.lat != null && branch?.lng != null ? `\n🗺️ https://www.google.com/maps?q=${branch.lat},${branch.lng}` : '';
+    await this.send(
+      phone,
+      s,
+      buildText(
+        phone,
+        `📍 *${branch?.restaurant?.name ?? 'Our restaurant'}${branch?.name ? `, ${branch.name}` : ''}*\n${branch?.address ?? ''}${map}${branch?.phone ? `\n📞 ${branch.phone}` : ''}`,
+      ),
+    );
+    if (s.state !== ConversationState.GREETING) return this.prompt(phone, s);
   }
 
   private async sendTrackingInfo(phone: string, s: WaSession): Promise<void> {

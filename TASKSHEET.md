@@ -90,6 +90,9 @@
 | 46 | Categories / category cards no longer ask Delivery or Pickup first; asked at checkout | ✅ |
 | 47 | Typed search: "pizza", "burger", "sandwich" open the category as cards; dishes match by name | ✅ |
 | 48 | Menu picture: generated photo grid of numbered categories + numbered list; type a number to open | ✅ |
+| 49 | Fix: stuck at "Where should we deliver?"; typed text now gets help + Pickup / Cart / New order | ✅ |
+| 50 | "menu" after a break shows the menu (not "Continue?"); "cart clear" / "new order" / "cart" / "where are you" work anywhere | ✅ |
+| 51 | Square (1:1) photos on cards | ✅ |
 
 ---
 

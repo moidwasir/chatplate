@@ -24,6 +24,8 @@ const TILE_H = 330;
 const HEADER_H = 130;
 const PADDING_BOTTOM = 24;
 const BACKGROUND = '#FFF8F0';
+/** Photo cards use square photos */
+const SQUARE_PX = 640;
 const INK = '#1F2937';
 const ACCENT = '#16A34A';
 /** Generated images are reused for this long (a menu change makes a new one anyway) */
@@ -73,6 +75,36 @@ export class MenuGridService {
     } catch (err: any) {
       this.logger.warn(`Could not make the menu grid: ${err?.message ?? err}`);
       return null;
+    }
+  }
+
+  /**
+   * Square (1:1) copies of photos for photo cards, made once and reused.
+   * Falls back to the original photo if a copy can't be made.
+   */
+  async squareUrls(urls: string[]): Promise<string[]> {
+    return Promise.all(urls.map((u) => this.squareUrl(u)));
+  }
+
+  private async squareUrl(url: string): Promise<string> {
+    const hash = createHash('sha1').update(`sq1:${url}`).digest('hex').slice(0, 20);
+    const cacheKey = `menusq:${hash}`;
+    const known = this.memo.get(cacheKey) ?? (await this.session.getCached(cacheKey).catch(() => null));
+    if (known) {
+      this.memo.set(cacheKey, known);
+      return known;
+    }
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`photo ${res.status}`);
+      const square = await sharp(Buffer.from(await res.arrayBuffer())).resize(SQUARE_PX, SQUARE_PX, { fit: 'cover' }).jpeg({ quality: 85 }).toBuffer();
+      const out = await this.storage.put(`menu-square/${hash}.jpg`, square, 'image/jpeg');
+      this.memo.set(cacheKey, out);
+      await this.session.setCached(cacheKey, out, CACHE_TTL_S).catch(() => undefined);
+      return out;
+    } catch (err: any) {
+      this.logger.warn(`Could not make a square photo: ${err?.message ?? err}`);
+      return url;
     }
   }
 
