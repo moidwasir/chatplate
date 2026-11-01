@@ -58,6 +58,14 @@ export interface WaLocationRequestMessage {
   };
 }
 
+export interface WaImageMessage {
+  messaging_product: 'whatsapp';
+  recipient_type: 'individual';
+  to: string;
+  type: 'image';
+  image: { link: string; caption?: string };
+}
+
 export interface WaTemplateMessage {
   messaging_product: 'whatsapp';
   to: string;
@@ -79,6 +87,7 @@ export type WaOutboundMessage =
   | WaButtonsMessage
   | WaListMessage
   | WaLocationRequestMessage
+  | WaImageMessage
   | WaTemplateMessage;
 
 // ─── Builders ─────────────────────────────────────────────────────────────────
@@ -159,6 +168,17 @@ export function buildLocationRequest(to: string, text: string): WaLocationReques
   };
 }
 
+/** Image by public URL — Meta fetches it, so it must be reachable from the internet */
+export function buildImage(to: string, link: string, caption?: string): WaImageMessage {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'image',
+    image: { link, ...(caption && { caption }) },
+  };
+}
+
 export function buildTemplate(
   to: string,
   templateName: string,
@@ -191,6 +211,7 @@ export function buildGreeting(
   customerName?: string,
   isOpen = true,
   openingTime?: string,
+  isReturning = false,
 ): WaButtonsMessage | WaTextMessage {
   if (!isOpen) {
     return buildText(
@@ -199,34 +220,37 @@ export function buildGreeting(
     );
   }
 
-  const greeting = customerName ? `Welcome back, ${customerName}! 👋` : 'Welcome! 👋';
+  const greeting = customerName
+    ? `${isReturning ? 'Welcome back' : 'Welcome'}, ${customerName}! 👋`
+    : 'Welcome! 👋';
+  // WhatsApp allows 3 buttons; staff are reached by typing "help" (see footer)
   return buildButtons(
     to,
-    `${greeting}\n\n*${restaurantName}* — what can we get for you today?`,
+    `${greeting}\n\nWhat can we get for you today?`,
     [
+      { id: 'menu_full', title: '📋 View Menu' },
       { id: 'action_order', title: '🛒 Order Now' },
       { id: 'action_track', title: '📦 Track Order' },
-      { id: 'action_staff', title: '💬 Talk to Staff' },
     ],
-    restaurantName,
+    `🍽️ ${restaurantName}`,
+    'Need help? Type "help" to talk to our staff',
   );
 }
 
-// ─── Order confirmation builder ───────────────────────────────────────────────
-export function buildOrderConfirmed(
+// ─── Order received builder ───────────────────────────────────────────────────
+/** Sent when the customer places an order; "confirmed" only comes once staff accept it */
+export function buildOrderReceived(
   to: string,
   orderNumber: string,
-  etaMinutes: number,
   total: number, // paisa
 ): WaTextMessage {
-  const pkr = (total / 100).toLocaleString('en-PK');
+  const pkr = Math.round(total / 100).toLocaleString('en-PK');
   return buildText(
     to,
-    `✅ *Order Confirmed!*\n\n` +
+    `📥 *Order Received!*\n\n` +
       `Order #: *${orderNumber}*\n` +
-      `Total: *PKR ${pkr}*\n` +
-      `Estimated time: *${etaMinutes} minutes*\n\n` +
-      `We'll send you updates as your order progresses. Thank you! 🙏`,
+      `Total: *PKR ${pkr}*\n\n` +
+      `The restaurant will confirm it shortly. We'll message you at every step. Thank you! 🙏`,
   );
 }
 
@@ -235,7 +259,7 @@ export function buildTipSelection(
   to: string,
   total: number, // paisa
 ): WaButtonsMessage {
-  const pkr = (total / 100).toLocaleString('en-PK');
+  const pkr = Math.round(total / 100).toLocaleString('en-PK');
   const tip5 = Math.round(total * 0.05 / 100);
   const tip10 = Math.round(total * 0.10 / 100);
   return buildButtons(

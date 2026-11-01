@@ -1,6 +1,55 @@
-# 🍽️ WhatsApp Restaurant Ordering System — Task Sheet
+# 🍽️ ChatPlate — Task Sheet
 
-> **Project:** Safi Food & Beverage | **Started:** Oct 31, 2026 | **Target MVP Go-Live:** Week 18
+> **Product:** ChatPlate (WhatsApp ordering for restaurants) | **First client:** Safi Food & Beverage | **Started:** Oct 31, 2026 | **Target MVP Go-Live:** Week 18
+
+---
+
+## 🔨 Now working on — Session of Nov 1, 2026
+
+> Updated live while work is in progress. ✅ done · 🔄 in progress · ⏳ next
+
+**Goal:** Phase 2, WhatsApp ordering engine (webhook → chat → COD order)
+
+| # | Task | Status |
+|---|---|---|
+| 1 | Link the `@safi/whatsapp` message builders into the API (it didn't compile) | ✅ |
+| 2 | Webhook security: check Meta's signature with the **app secret** over the **raw body** | ✅ |
+| 3 | Outgoing sender: remove the debounce that dropped replies, add rate limiting, save every sent message | ✅ |
+| 4 | Dev outbox: without real WhatsApp credentials, replies are logged instead of sent (local testing) | ✅ |
+| 5 | Delivery status tracking (sent → delivered → read, never goes backwards) | ✅ |
+| 6 | Chat session in Redis: cart kept 24 h, "continue or start over?" after 30 min idle | ✅ |
+| 7 | Customer journey steps 1–9 (greeting, delivery/pickup, menu, options + quantity, cart, location, tip, summary with tax, COD confirm) | ✅ |
+| 8 | Delivery zone check + fee + minimum order on the shared location | ✅ |
+| 9 | Opening hours in Pakistan time (overnight hours supported) | ✅ |
+| 10 | COD orders were saved as PAID; now PENDING until the cash is collected | ✅ |
+| 11 | End-to-end test with simulated WhatsApp messages (2 orders placed, all checks passed) | ✅ |
+| 12 | Fix: brand-new customers were greeted "Welcome back"; totals showed "PKR 2,696.2" | ✅ |
+| 13 | Tick off finished roadmap items below + rewrite PROJECT_STATUS.md | ✅ |
+| 14 | Terminal chat simulator for local bot testing (`pnpm --filter api wa:sim`) | ✅ |
+
+**Part 2 goal:** staff can accept and progress orders; the customer gets a WhatsApp message at each step
+
+| # | Task | Status |
+|---|---|---|
+| 15 | API: every status change queues a WhatsApp update to the customer (accepted, preparing, ready, on the way, delivered, cancelled) | ✅ |
+| 16 | API: validate status changes (delivery vs pickup steps, reason required to reject), set prep time on accept | ✅ |
+| 17 | Bot: order-placed message says "Received, waiting for the restaurant", not "Confirmed" | ✅ |
+| 18 | Dashboard: live Orders page (new-order sound, details, accept/reject, next-step buttons) | ✅ |
+| 19 | Overview refreshes live; simulator shows messages that arrive on their own | ✅ |
+| 20 | End-to-end test + rewrite PROJECT_STATUS.md | ✅ |
+
+**Part 3 goal:** manage a high daily order volume on the dashboard; a proper menu on WhatsApp
+
+| # | Task | Status |
+|---|---|---|
+| 21 | API: order search/filters (status, date, type, text) with paging + per-status counts | ✅ |
+| 22 | Dashboard: clickable orders → side panel with full details, progress bar and status history | ✅ |
+| 23 | Dashboard: Orders management sidebar (views with counts, date range, type, search), board + list views | ✅ |
+| 24 | Dashboard: progress bars on cards and the Overview; Overview rows open the order | ✅ |
+| 25 | WhatsApp: full formatted menu message, richer category list, paging for long menus | ✅ |
+| 26 | End-to-end test + rewrite PROJECT_STATUS.md | ✅ |
+
+**Session complete.** Next up: see "Next steps" in [PROJECT_STATUS.md](./PROJECT_STATUS.md).
 
 ---
 
@@ -23,13 +72,14 @@
 - [x] Initialize pnpm workspace with Turborepo
 - [x] Create `apps/api` (NestJS + TypeScript)
 - [x] Create `apps/dashboard` (Next.js 15 + Tailwind CSS)
-- [x] Create `apps/pos` (Next.js PWA)
-- [x] Create `apps/kds` (Next.js PWA)
-- [x] Create `apps/rider` (Next.js mobile-first)
+- [ ] Create `apps/pos` (Next.js PWA)
+- [ ] Create `apps/kds` (Next.js PWA)
+- [ ] Create `apps/rider` (Next.js mobile-first)
 - [x] Create `packages/types` (shared types + Zod schemas)
 - [x] Create `packages/ui` (shared React component library)
 - [x] Create `packages/whatsapp` (message builders & template helpers)
-- [x] Configure TypeScript, ESLint, Prettier across workspace
+- [x] Configure TypeScript, Prettier across workspace
+- [ ] ESLint config (lint scripts exist, no config yet)
 - [x] Set up Turborepo `turbo.json` pipeline
 
 ### 1.2 Infrastructure
@@ -57,57 +107,57 @@
 
 ### 1.4 Auth & Roles (Backend)
 - [x] JWT auth module (email + password for owner/manager)
-- [x] PIN login for POS cashiers
-- [x] Role-based guards (Owner, Manager, Cashier, Kitchen, Rider)
-- [x] Refresh token rotation
+- [x] PIN login for POS cashiers (rate-limited 5/min)
+- [x] Role-based guards (Owner, Manager, Cashier, Kitchen, Rider) + branch-access checks
+- [x] Refresh token rotation (with reuse detection)
 
 ### 1.5 Menu Service (Backend)
-- [x] CRUD for categories, items, variants, modifiers
+- [x] CRUD for categories, items, variants, modifiers (variants = modifier groups, e.g. Size)
 - [x] Sold-out flag toggle endpoint
-- [x] Item scheduling (serving hours, hide outside hours)
-- [x] Branch-specific pricing
-- [x] Image upload to S3-compatible storage
+- [x] Item scheduling (serving hours in Asia/Karachi time, overnight windows supported)
+- [x] Branch-specific pricing (each branch owns its menu; "copy menu to new branch" still to do)
+- [x] Image upload to S3-compatible storage (local-disk fallback when S3 isn't configured)
 
 ### 1.6 Dashboard Shell (Frontend)
 - [x] Auth layout with login page
 - [x] Dashboard layout with sidebar navigation
 - [x] Menu Manager screen (categories + items CRUD)
-- [x] Live status indicators
+- [x] Live status indicators (API health + Socket.IO connection)
 
 ---
 
-## 💬 Phase 2 — WhatsApp Ordering Engine
+## 💬 Phase 2 — WhatsApp Ordering Engine *(IN PROGRESS)*
 
 ### 2.1 WhatsApp Gateway (Backend)
-- [ ] Webhook verification endpoint (GET challenge)
-- [ ] Webhook receiver with Meta signature verification
-- [ ] Idempotency check on wa_message_id
-- [ ] Outgoing message sender with rate limiting
-- [ ] Message delivery status tracking
-- [ ] Business hours check middleware
+- [x] Webhook verification endpoint (GET challenge)
+- [x] Webhook receiver with Meta signature verification (app secret, raw body)
+- [x] Idempotency check on wa_message_id
+- [x] Outgoing message sender with rate limiting (+ dev outbox when no credentials)
+- [x] Message delivery status tracking
+- [x] Business hours check (restaurant timezone, overnight hours)
 
 ### 2.2 Conversation State Machine
-- [ ] Redis-backed session store (30-min idle, 24-hr cart survival)
-- [ ] States: greeting → order_type → category → item → cart → address → tip → payment → confirmed
-- [ ] State persistence and recovery (resume dropped sessions)
-- [ ] Session handover to human agent flag
+- [x] Redis-backed session store (30-min idle, 24-hr cart survival)
+- [x] States: greeting → order_type → category → item → cart → address → tip → payment → confirmed
+- [x] State persistence and recovery (resume dropped sessions)
+- [x] Session handover to human agent flag (staff inbox to reply comes with the Chats screen)
 
 ### 2.3 Customer Journey — All 9 Steps
-- [ ] Step 1: Greeting (name lookup, hours check, menu/track/staff buttons)
-- [ ] Step 2: Delivery vs Pickup selection (+ branch selector if multi-branch)
-- [ ] Step 3: Category list → item list (with photo, description, price)
-- [ ] Step 4: Item detail (size, add-ons, spice level, notes, quantity)
-- [ ] Step 5: Cart summary (add more, edit, checkout + upsell drinks/sides)
-- [ ] Step 6: Location pin request → geocode → address confirm → delivery zone check
-- [ ] Step 7: Price breakdown (subtotal, delivery fee, tax, discount, total) + tip selection
-- [ ] Step 8: COD confirmation flow (online payment link flow to be enabled later)
-- [ ] Step 9: Order confirmation with number + ETA + live status updates
+- [x] Step 1: Greeting (name lookup, hours check, menu/track/staff buttons)
+- [x] Step 2: Delivery vs Pickup selection (branch selector still to do; uses first active branch)
+- [x] Step 3: Category list → item list (with photo, description, price; max 9 items per category until paging is added)
+- [x] Step 4: Item detail (option groups for size/add-ons/spice, quantity; free-text item notes still to do)
+- [ ] Step 5: Cart summary (add more, clear, checkout done; edit a line + upsell still to do)
+- [x] Step 6: Location pin → saved address → delivery zone check, fee, minimum order (uses WhatsApp's address text; Google geocoding later)
+- [x] Step 7: Price breakdown (subtotal, tax, delivery fee, tip, total) + tip selection (discount comes with promo codes)
+- [x] Step 8: COD confirmation flow (online payment link flow to be enabled later)
+- [ ] Step 9: Order confirmation with number + ETA (done) + live status updates (Phase 3.3 templates)
 
 ### 2.4 Customer Features
 - [ ] Returning customer recognition (name, reorder last order, favourites)
-- [ ] Saved addresses per customer (Home, Office)
+- [x] Saved addresses per customer (picked from a list on the next order)
 - [ ] Session reminder message (30-min idle warning)
-- [ ] Free-text fallback → help reply + "Talk to staff" button
+- [x] Free-text fallback → help reply + "Talk to staff" button (+ "hi"/"menu"/"cancel" keywords)
 - [ ] Language selection (English / Urdu Roman / Urdu Script) stored on customer
 
 ---
@@ -115,7 +165,7 @@
 ## 💳 Phase 3 — Payments & Order Engine
 
 ### 3.1 Order Service
-- [ ] Order creation from WhatsApp (COD)
+- [x] Order creation from WhatsApp (COD)
 - [ ] Order creation from POS (walk-in, phone, dine-in)
 - [ ] Status state machine: New → Accepted → Preparing → Ready → Out for Delivery → Delivered / Picked up
 - [ ] Cancel and Refund transitions with allowed-state enforcement
@@ -294,4 +344,4 @@
 
 ---
 
-*Last updated: Nov 1, 2026 — Phase 1 Foundation LIVE. Database migrated & seeded, API running on port 3001, WhatsApp webhook verification tested & passing.*
+*Last updated: Nov 1, 2026 — Checkboxes audited against the code. 1.4 Auth done: JWT + PIN login, global role guards, refresh rotation. 1.5 Menu and 1.6 Dashboard done. Remaining in Phase 1: POS/KDS/rider app scaffolds, ESLint config, staging VPS + SSL.*

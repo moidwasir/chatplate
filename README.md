@@ -1,8 +1,11 @@
-# 🍽️ WhatsApp Restaurant Ordering System
+# 🍽️ ChatPlate
 
-> **Client / Project:** Safi Food & Beverage  
+*Your restaurant, on WhatsApp.* A WhatsApp ordering system for restaurants: customers order by chat, staff manage orders on a live dashboard.
+
+> **First client:** Safi Food & Beverage (Safi Restaurant)  
 > **Architecture:** Modular Monolith (NestJS + Socket.IO + Next.js + PostgreSQL + Redis)  
-> **Task Sheet:** See [TASKSHEET.md](./TASKSHEET.md) for full roadmap, live progress & sprint deliverables.
+> **Task Sheet:** See [TASKSHEET.md](./TASKSHEET.md) for full roadmap, live progress & sprint deliverables.  
+> **Current Status:** See [PROJECT_STATUS.md](./PROJECT_STATUS.md) for what's built, how to run it, API reference & known issues.
 
 ---
 
@@ -59,3 +62,4 @@ pnpm dev
 ## 📌 Development Plan & Documentation
 - **Task Sheet**: [`TASKSHEET.md`](./TASKSHEET.md)
 - **Original Plan**: `WhatsApp Restaurant Ordering System – Full Development Plan.md`
+

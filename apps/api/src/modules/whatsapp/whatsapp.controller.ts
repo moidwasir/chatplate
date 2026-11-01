@@ -5,15 +5,21 @@ import {
   Query,
   Body,
   Headers,
+  Req,
   HttpCode,
   HttpStatus,
   UnauthorizedException,
   Logger,
+  type RawBodyRequest,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { WhatsAppService } from './whatsapp.service';
+import { Public } from '../auth/decorators/public.decorator';
 
+// Called by Meta — authenticated by verify token / signature, not JWT
+@Public()
 @Controller('webhooks/whatsapp')
 export class WhatsAppController {
   private readonly logger = new Logger(WhatsAppController.name);
@@ -49,24 +55,34 @@ export class WhatsAppController {
   @Post()
   @HttpCode(HttpStatus.OK)
   async receiveWebhook(
+    @Req() req: RawBodyRequest<Request>,
     @Body() payload: any,
     @Headers('x-hub-signature-256') signature: string,
   ): Promise<{ status: string }> {
-    // Verify Meta signature
-    this.verifySignature(JSON.stringify(payload), signature);
+    // Verify Meta signature over the raw bytes — re-serialised JSON won't match
+    this.verifySignature(req.rawBody, signature);
 
-    // Acknowledge immediately — Meta will retry if we don't respond fast
-    // Fire-and-forget: push to processing queue
-    this.whatsappService.enqueueInboundPayload(payload).catch((err) => {
-      this.logger.error('Failed to enqueue WhatsApp payload', err);
-    });
+    // Queue it and acknowledge — the processor does the heavy work.
+    // If queueing fails we return 5xx so Meta retries rather than losing the message.
+    await this.whatsappService.enqueueInboundPayload(payload);
 
     return { status: 'ok' };
   }
 
-  private verifySignature(rawBody: string, signature: string): void {
-    const appSecret = this.config.get<string>('WHATSAPP_ACCESS_TOKEN');
-    if (!appSecret || !signature) {
+  private verifySignature(rawBody: Buffer | undefined, signature: string): void {
+    const appSecret = this.config.get<string>('WHATSAPP_APP_SECRET');
+    const configured = !!appSecret && !appSecret.startsWith('your_');
+
+    // Without a real app secret, only development may skip the check (local webhook testing)
+    if (!configured) {
+      if (this.config.get<string>('NODE_ENV') === 'production') {
+        throw new UnauthorizedException('WHATSAPP_APP_SECRET is not configured');
+      }
+      this.logger.debug('DEV mode: no app secret set, skipping webhook signature verification');
+      return;
+    }
+
+    if (!signature || !rawBody) {
       throw new UnauthorizedException('Missing signature');
     }
     const expected = 'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
@@ -79,7 +95,8 @@ export class WhatsAppController {
       ) {
         throw new UnauthorizedException('Invalid webhook signature');
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Signature verification failed');
     }
   }

@@ -37,3 +37,9 @@ apps/api/prisma/migrations/*.bak
 # OS
 Thumbs.db
 
+
+# Local dev uploads
+apps/api/uploads/
+
+# TypeScript incremental build info
+*.tsbuildinfo

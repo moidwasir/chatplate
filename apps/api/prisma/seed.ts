@@ -195,6 +195,24 @@ async function main() {
     create: { userId: owner.id, branchId: branch.id },
   });
 
+  // ─── Cashier (POS PIN login) ──────────────────────────────────────────────
+  const cashier = await prisma.user.upsert({
+    where: { phone: '+923000000001' },
+    update: {},
+    create: {
+      phone: '+923000000001',
+      name: 'Demo Cashier',
+      role: 'CASHIER',
+      pinHash: await bcrypt.hash('1234', 12),
+    },
+  });
+
+  await prisma.userBranchAccess.upsert({
+    where: { userId_branchId: { userId: cashier.id, branchId: branch.id } },
+    update: {},
+    create: { userId: cashier.id, branchId: branch.id },
+  });
+
   console.log('✅ Seed complete!');
   console.log(`   Restaurant: ${restaurant.name}`);
   console.log(`   Branch: ${branch.name}`);

@@ -1,64 +1,218 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
+import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bull';
+import axios from 'axios';
+import { randomUUID } from 'crypto';
+import { MessageDirection } from '@safi/types';
+import { PrismaService } from '../../common/prisma/prisma.service';
 
 export const WHATSAPP_QUEUE = 'whatsapp-inbound';
+
+/** Meta delivery statuses in the order they progress */
+const STATUS_RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3 };
 
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
+  private readonly apiUrl: string;
+  private readonly phoneNumberId: string;
+  private readonly accessToken: string;
+  private readonly minSendGapMs: number;
+  private nextSendAt = 0;
+
   constructor(
     @InjectQueue(WHATSAPP_QUEUE) private readonly inboundQueue: Queue,
-  ) {}
+    config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
+    this.apiUrl = config.get<string>('WHATSAPP_API_URL') ?? 'https://graph.facebook.com/v21.0';
+    this.phoneNumberId = config.get<string>('WHATSAPP_PHONE_NUMBER_ID') ?? '';
+    this.accessToken = config.get<string>('WHATSAPP_ACCESS_TOKEN') ?? '';
+    const perSecond = Number(config.get<string>('WHATSAPP_MAX_SENDS_PER_SECOND') ?? 20);
+    this.minSendGapMs = Math.ceil(1000 / Math.max(1, perSecond));
+  }
 
   /**
-   * Push the raw Meta webhook payload into BullMQ for processing.
-   * The controller returns 200 immediately; the queue worker handles the message.
+   * Push the raw Meta webhook payload into Bull for processing.
+   * The controller awaits this (Redis is fast) so a failure returns 5xx and Meta retries.
+   * Duplicate deliveries are dropped by jobId here and by the Message.waMessageId check in the engine.
    */
   async enqueueInboundPayload(payload: any): Promise<void> {
-    const messages = payload?.entry?.[0]?.changes?.[0]?.value?.messages ?? [];
-    const statuses = payload?.entry?.[0]?.changes?.[0]?.value?.statuses ?? [];
+    for (const entry of payload?.entry ?? []) {
+      for (const change of entry?.changes ?? []) {
+        const value = change?.value ?? {};
 
-    for (const message of messages) {
-      // Deduplicate by wa_message_id — handled inside the processor
-      await this.inboundQueue.add(
-        'inbound-message',
-        { message, metadata: payload?.entry?.[0]?.changes?.[0]?.value },
-        {
-          jobId: `wa_msg_${message.id}`, // BullMQ will skip if same jobId exists
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
-          removeOnComplete: 1000,
-          removeOnFail: 500,
-        },
-      );
-    }
+        // A business account can hold several numbers, and Meta sends all of them to every
+        // subscribed app. Only handle our own number, or we'd answer another business's chats.
+        const toNumber = value?.metadata?.phone_number_id;
+        if (!this.isDevOutbox() && toNumber && toNumber !== this.phoneNumberId) {
+          this.logger.debug(`Ignoring webhook for another number (phone_number_id=${toNumber})`);
+          continue;
+        }
 
-    for (const status of statuses) {
-      await this.inboundQueue.add(
-        'message-status',
-        { status },
-        {
-          jobId: `wa_status_${status.id}_${status.status}`,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
-          removeOnComplete: 500,
-          removeOnFail: 200,
-        },
-      );
+        for (const message of value.messages ?? []) {
+          await this.inboundQueue.add(
+            'inbound-message',
+            { message, metadata: value },
+            {
+              jobId: `wa_msg_${message.id}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 1000 },
+              removeOnComplete: 1000,
+              removeOnFail: 500,
+            },
+          );
+        }
+
+        for (const status of value.statuses ?? []) {
+          await this.inboundQueue.add(
+            'message-status',
+            { status },
+            {
+              jobId: `wa_status_${status.id}_${status.status}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 1000 },
+              removeOnComplete: 500,
+              removeOnFail: 200,
+            },
+          );
+        }
+      }
     }
   }
 
   /**
-   * Send a message via WhatsApp Cloud API.
-   * Used by the conversation engine and notification service.
+   * Send a message via WhatsApp Cloud API and record it on the conversation.
+   * Sends are spaced out to stay under Meta's per-number throughput limit.
+   * Without real credentials (dev), the message is logged and stored instead of sent.
+   *
+   * @param to              Recipient phone number in E.164 without "+" (e.g. "923001234567")
+   * @param payload         WhatsApp message object (text, interactive, template, etc.)
+   * @param conversationId  When given, the outbound message is saved for status tracking
+   * @returns               WhatsApp message ID from Meta, or null on error
    */
-  async sendMessage(to: string, payload: object): Promise<string | null> {
-    // TODO: implement HTTP call to Meta Cloud API
-    // POST https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages
-    this.logger.debug(`Sending WhatsApp message to ${to}`);
-    return null;
+  async sendMessage(to: string, payload: object, conversationId?: string): Promise<string | null> {
+    await this.waitForSendSlot();
+
+    let messageId: string | null = null;
+    let status = 'sent';
+
+    if (this.isDevOutbox()) {
+      messageId = `dev_${randomUUID()}`;
+      this.logger.log(`[dev outbox] → ${to}: ${summarise(payload)}`);
+    } else {
+      try {
+        const response = await axios.post(
+          `${this.apiUrl}/${this.phoneNumberId}/messages`,
+          { messaging_product: 'whatsapp', to, ...payload },
+          {
+            headers: {
+              Authorization: `Bearer ${this.accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10_000,
+          },
+        );
+        messageId = response.data?.messages?.[0]?.id ?? null;
+        this.logger.debug(`WhatsApp message sent to ${to}, id=${messageId}`);
+      } catch (err: any) {
+        const responseBody = err?.response?.data
+          ? JSON.stringify(err.response.data)
+          : err?.message;
+        this.logger.error(`Failed to send WhatsApp message to ${to}: ${responseBody}`);
+        status = 'failed';
+        // Swallow error — notification failures must not crash orders
+      }
+    }
+
+    if (conversationId) {
+      await this.recordOutbound(conversationId, messageId ?? `failed_${randomUUID()}`, payload, status);
+    }
+    return messageId;
+  }
+
+  /** True while WhatsApp credentials are unset or still the .env.example placeholders */
+  isDevOutbox(): boolean {
+    return !this.accessToken || this.accessToken.startsWith('your_') ||
+      !this.phoneNumberId || this.phoneNumberId.startsWith('your_');
+  }
+
+  private async recordOutbound(conversationId: string, waMessageId: string, payload: any, status: string) {
+    try {
+      await this.prisma.message.create({
+        data: {
+          conversationId,
+          waMessageId,
+          direction: MessageDirection.OUTBOUND,
+          type: payload?.type ?? 'text',
+          content: payload,
+          status,
+        },
+      });
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: new Date() },
+      });
+    } catch (err: any) {
+      this.logger.warn(`Could not record outbound message on ${conversationId}: ${err?.message}`);
+    }
+  }
+
+  /** Space sends evenly: at most WHATSAPP_MAX_SENDS_PER_SECOND across the process */
+  private waitForSendSlot(): Promise<void> {
+    const now = Date.now();
+    const slot = Math.max(now, this.nextSendAt);
+    this.nextSendAt = slot + this.minSendGapMs;
+    const wait = slot - now;
+    return wait > 0 ? new Promise((r) => setTimeout(r, wait)) : Promise.resolve();
+  }
+
+  /**
+   * Handle an incoming delivery-status update from Meta and persist it.
+   *
+   * @param status  The status object from the webhook payload
+   *                (e.g. { id: 'wamid.xxx', status: 'delivered', ... })
+   */
+  async handleMessageStatus(status: any): Promise<void> {
+    const waMessageId: string = status?.id;
+    const newStatus: string = status?.status;
+
+    if (!waMessageId || !newStatus) {
+      this.logger.warn('handleMessageStatus called with incomplete status object', status);
+      return;
+    }
+
+    try {
+      // Statuses can arrive out of order — never move backwards (e.g. read → delivered)
+      const rank = STATUS_RANK[newStatus] ?? 0;
+      const lower = Object.keys(STATUS_RANK).filter((s) => STATUS_RANK[s] < rank);
+      await this.prisma.message.updateMany({
+        where:
+          newStatus === 'failed'
+            ? { waMessageId }
+            : { waMessageId, OR: [{ status: null }, { status: { in: lower } }] },
+        data: { status: newStatus },
+      });
+      this.logger.debug(`Message ${waMessageId} status updated to "${newStatus}"`);
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to update message status for ${waMessageId}: ${err?.message}`,
+      );
+    }
   }
 }
 
+/** One-line description of an outbound payload for logs */
+function summarise(payload: any): string {
+  const body =
+    payload?.text?.body ??
+    payload?.interactive?.body?.text ??
+    (payload?.template ? `template ${payload.template.name}` : payload?.type);
+  const options =
+    payload?.interactive?.action?.buttons?.map((b: any) => b.reply.title) ??
+    payload?.interactive?.action?.sections?.flatMap((sec: any) => sec.rows.map((r: any) => r.title));
+  const text = String(body ?? '').replace(/\s+/g, ' ').slice(0, 160);
+  return options?.length ? `${text} [${options.join(' | ')}]` : text;
+}

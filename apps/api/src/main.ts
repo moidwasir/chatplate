@@ -1,11 +1,17 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { LOCAL_UPLOAD_DIR } from './common/storage/storage.service';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  // rawBody: the WhatsApp webhook signature is computed over the exact bytes Meta sent
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+
+  // Local uploads (dev fallback when S3 isn't configured)
+  app.useStaticAssets(LOCAL_UPLOAD_DIR, { prefix: '/uploads/' });
 
   // Global validation pipe — strips unknown fields, transforms types
   app.useGlobalPipes(
@@ -28,7 +34,7 @@ async function bootstrap() {
   // Swagger docs (dev only)
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
-      .setTitle('Safi Restaurant API')
+      .setTitle('ChatPlate API')
       .setDescription('WhatsApp Restaurant Ordering System — REST + WebSocket API')
       .setVersion('1.0')
       .addBearerAuth()
@@ -44,4 +50,3 @@ async function bootstrap() {
 }
 
 bootstrap();
-

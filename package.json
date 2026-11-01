@@ -1,8 +1,8 @@
 {
-  "name": "safi-restaurant-system",
+  "name": "chatplate",
   "version": "1.0.0",
   "private": true,
-  "description": "WhatsApp Restaurant Ordering System — Safi F&B",
+  "description": "ChatPlate — WhatsApp ordering system for restaurants",
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
