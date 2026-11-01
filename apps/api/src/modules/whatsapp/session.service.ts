@@ -111,6 +111,16 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
     await this.redis.del(this.key(phone));
   }
 
+  // ─── Small shared cache (e.g. the generated menu image's URL) ──────────────
+
+  async getCached(key: string): Promise<string | null> {
+    return this.redis.get(`wa:cache:${key}`);
+  }
+
+  async setCached(key: string, value: string, ttlSeconds: number): Promise<void> {
+    await this.redis.setex(`wa:cache:${key}`, ttlSeconds, value);
+  }
+
   /**
    * Run `fn` while holding this customer's lock, so two messages from the same
    * person (e.g. quick double taps) are handled one after the other and never

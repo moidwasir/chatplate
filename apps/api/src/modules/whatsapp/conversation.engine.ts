@@ -29,6 +29,7 @@ import {
   unitTotal,
 } from './session.service';
 import { quoteDelivery, ZoneLike } from './delivery-quote';
+import { GRID_MAX_TILES, MenuGridService } from './menu-grid.service';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ export class ConversationEngine {
     private readonly menu: MenuService,
     private readonly orders: OrdersService,
     private readonly whatsapp: WhatsAppService,
+    private readonly menuGrid: MenuGridService,
     config: ConfigService,
   ) {
     this.timeZone = config.get<string>('RESTAURANT_TIMEZONE') ?? 'Asia/Karachi';
@@ -267,8 +269,9 @@ export class ConversationEngine {
       s.state === ConversationState.PAYMENT;
     // "View Menu" / "menu dikhao": photo cards to browse and buy from
     if (input.id === 'menu_full' || (input.text && FULL_MENU_TEXT.test(input.text))) {
+      const before = s.state;
       await this.sendVisualMenu(phone, s);
-      return midOrder ? this.prompt(phone, s) : undefined;
+      return midOrder && s.state === before ? this.prompt(phone, s) : undefined;
     }
     // The text price list
     if (input.id === 'menu_text') {
@@ -279,6 +282,10 @@ export class ConversationEngine {
     const tappedCategory = input.id?.startsWith('cat_page_') ? null : stripPrefix(input.id, 'cat_');
     if (tappedCategory && s.state !== ConversationState.MENU_CATEGORY) return this.sendItemsForCategory(phone, s, tappedCategory);
 
+    // A number typed after the menu picture / category list ("3" → Pizza)
+    if (input.text && /^\d{1,2}$/.test(input.text) && s.state === ConversationState.MENU_CATEGORY) {
+      return this.handleCategorySelection(phone, s, input);
+    }
     // Typed food words ("need pizza", "biryani chahiye") jump straight to matching items
     const browsing = [
       ConversationState.GREETING, ConversationState.ORDER_TYPE, ConversationState.MENU_CATEGORY,
@@ -431,25 +438,37 @@ export class ConversationEngine {
   // Step 3 — Categories and items
   // ─────────────────────────────────────────────────────────────────────────────
 
-  private async sendCategoryMenu(phone: string, s: WaSession, page = 0): Promise<void> {
+  private async sendCategoryMenu(phone: string, s: WaSession, page = 0, withPicture = false): Promise<void> {
     const categories = dealsFirst(await this.menu.getFullMenu(s.branchId));
     if (categories.length === 0) {
       await this.send(phone, s, buildText(phone, '😔 Sorry, no menu items are available right now. Please try again later.'));
       return;
     }
 
-    // First time in this order: show the whole menu once, so the customer can browse before picking
-    if (!s.fullMenuShown && page === 0) await this.sendVisualMenu(phone, s, false);
+    // First time in this order: show the whole menu once, so the customer can browse before picking.
+    // Small menus get every item as photo cards; bigger ones a picture of all categories.
+    const photoItems = categories.flatMap((c) => c.items.filter((i) => isPublicImage(i.imageUrl)));
+    const smallMenu = photoItems.length >= 2 && photoItems.length <= CAROUSEL_MAX_CARDS;
+    if (page === 0 && !s.fullMenuShown && smallMenu) {
+      await this.sendVisualMenu(phone, s, false);
+    } else if (page === 0 && (withPicture || !s.fullMenuShown)) {
+      s.fullMenuShown = true;
+      await this.sendMenuPicture(phone, s, categories);
+    }
 
-    // WhatsApp lists hold 10 rows: categories, then "full menu" and (with items) the cart
+    // WhatsApp lists hold 10 rows: categories, then the price list and (with items) the cart when they fit
     const extras = [{ id: 'menu_text', title: '📋 Price list', description: 'All items and prices in one message' }];
     if (s.cart.length > 0) {
       extras.push({ id: 'cart_view', title: '🛒 View cart', description: `PKR ${pkr(cartSubtotal(s.cart))}` });
     }
-    const { slice, next } = paginate(categories, page, 10 - extras.length);
-    const rows = slice.map((c) => ({
+    const fits = categories.length <= 10;
+    const shownExtras = fits && categories.length + extras.length > 10 ? [] : extras;
+    const { slice, next } = paginate(categories, page, fits ? 10 - shownExtras.length : 10 - extras.length);
+    const firstNumber = page * (fits ? 10 : 10 - extras.length);
+    const rows = slice.map((c, i) => ({
       id: `cat_${c.id}`,
-      title: truncate(`${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} ${c.name}`, 24),
+      // Numbered like the menu picture
+      title: truncate(`${firstNumber + i + 1}. ${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} ${c.name}`, 24),
       description: isDealCategory(c.name)
         ? `${c.items.length} deal${c.items.length !== 1 ? 's' : ''} · save up to PKR ${pkr(Math.max(0, ...c.items.map(saving)))}`
         : `${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
@@ -463,10 +482,10 @@ export class ConversationEngine {
       s,
       buildList(
         phone,
-        '🍽️ What are you in the mood for? Pick a category:',
+        `🍽️ What are you in the mood for? Tap *View Categories*, or type a number or a dish (e.g. *pizza*).${shownExtras.length < extras.length ? '\nType *price list* to see every price.' : ''}`,
         [
           { title: 'Categories', rows },
-          { title: 'More', rows: extras },
+          ...(shownExtras.length ? [{ title: 'More', rows: shownExtras }] : []),
         ],
         'View Categories',
         'Our Menu',
@@ -501,15 +520,8 @@ export class ConversationEngine {
         })),
       );
     } else if (photoCategories.length >= 2) {
-      carousel = buildCarousel(
-        phone,
-        `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and open a category.`,
-        photoCategories.slice(0, CAROUSEL_MAX_CARDS).map((c) => ({
-          imageUrl: c.items.find((i) => isPublicImage(i.imageUrl))!.imageUrl!,
-          text: `${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} *${c.name}*\n${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
-          buttons: [{ id: `cat_${c.id}`, title: '👀 See items' }],
-        })),
-      );
+      // Bigger menus: one picture of every category, then the numbered list to tap
+      return this.sendCategoryMenu(phone, s, 0, true);
     }
 
     await this.save(phone, s);
@@ -525,6 +537,43 @@ export class ConversationEngine {
     ];
     if (s.cart.length > 0) buttons.push({ id: 'cart_view', title: '🛒 View cart' });
     await this.send(phone, s, buildButtons(phone, 'Or browse by category, or see every price in one list:', buttons));
+  }
+
+  /** URL of the picture of every category (made once per menu version); null if it can't be made */
+  async menuPictureUrl(branchId: string, categories?: FullMenu, restaurantName?: string): Promise<string | null> {
+    const list = categories ?? dealsFirst(await this.menu.getFullMenu(branchId));
+    const name = restaurantName ?? (await this.getRestaurantName(branchId));
+    return this.menuGrid.gridUrl(
+      branchId,
+      `${name} · Menu`,
+      list.slice(0, GRID_MAX_TILES).map((c) => ({
+        name: c.name,
+        imageUrl: c.items.find((i) => isPublicImage(i.imageUrl))?.imageUrl ?? null,
+      })),
+    );
+  }
+
+  /** One picture of every category (numbered like the list); photo cards if the picture can't be made */
+  private async sendMenuPicture(phone: string, s: WaSession, categories: FullMenu): Promise<void> {
+    const restaurantName = await this.getRestaurantName(s.branchId);
+    const url = await this.menuPictureUrl(s.branchId, categories, restaurantName);
+    if (url && (await this.send(phone, s, buildImage(phone, url, `🍽️ *${restaurantName}*: our menu 👇`)))) return;
+
+    const photoCategories = categories.filter((c) => c.items.some((i) => isPublicImage(i.imageUrl)));
+    if (photoCategories.length < 2) return;
+    await this.send(
+      phone,
+      s,
+      buildCarousel(
+        phone,
+        `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and open a category.`,
+        photoCategories.slice(0, CAROUSEL_MAX_CARDS).map((c) => ({
+          imageUrl: c.items.find((i) => isPublicImage(i.imageUrl))!.imageUrl!,
+          text: `${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} *${c.name}*\n${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
+          buttons: [{ id: `cat_${c.id}`, title: '👀 See items' }],
+        })),
+      ),
+    );
   }
 
   /** The whole menu as formatted text: categories, items, prices, short descriptions */
@@ -656,8 +705,11 @@ export class ConversationEngine {
     const page = stripPrefix(input.id, 'cat_page_');
     if (page !== null) return this.sendCategoryMenu(phone, s, Number(page) || 0);
     const categoryId = stripPrefix(input.id, 'cat_');
-    if (!categoryId) return this.sendCategoryMenu(phone, s);
-    return this.sendItemsForCategory(phone, s, categoryId);
+    if (categoryId) return this.sendItemsForCategory(phone, s, categoryId);
+    const n = input.text && /^\d{1,2}$/.test(input.text) ? Number(input.text) : 0;
+    const picked = n > 0 ? dealsFirst(await this.menu.getFullMenu(s.branchId))[n - 1] : undefined;
+    if (picked) return this.sendItemsForCategory(phone, s, picked.id);
+    return this.sendCategoryMenu(phone, s);
   }
 
   private async sendItemsForCategory(phone: string, s: WaSession, categoryId: string, page = 0): Promise<void> {

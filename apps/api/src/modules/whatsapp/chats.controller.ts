@@ -3,9 +3,11 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { HandledBy } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { assertBranchAccess } from '../auth/guards/roles.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
 import { ChatsService } from './chats.service';
+import { ConversationEngine } from './conversation.engine';
 
 class ListChatsQueryDto {
   @IsString()
@@ -53,7 +55,17 @@ class SetHandlerDto {
 @Roles('OWNER', 'MANAGER', 'CASHIER')
 @Controller('chats')
 export class ChatsController {
-  constructor(private readonly chats: ChatsService) {}
+  constructor(
+    private readonly chats: ChatsService,
+    private readonly engine: ConversationEngine,
+  ) {}
+
+  /** The menu picture customers get for "menu" (made on first request after a menu change) */
+  @Get('menu-picture')
+  async menuPicture(@Query() query: BranchQueryDto, @CurrentUser() user: AuthUser) {
+    assertBranchAccess(user, query.branchId);
+    return { url: await this.engine.menuPictureUrl(query.branchId) };
+  }
 
   @Get()
   list(@Query() query: ListChatsQueryDto, @CurrentUser() user: AuthUser) {

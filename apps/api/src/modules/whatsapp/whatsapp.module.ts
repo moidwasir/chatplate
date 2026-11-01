@@ -6,6 +6,7 @@ import { SessionService } from './session.service';
 import { OrderNotifier } from './order-notifier';
 import { ChatsController } from './chats.controller';
 import { ChatsService } from './chats.service';
+import { MenuGridService } from './menu-grid.service';
 import { MenuModule } from '../menu/menu.module';
 import { OrdersModule } from '../orders/orders.module';
 
@@ -21,6 +22,7 @@ import { OrdersModule } from '../orders/orders.module';
     SessionService,
     OrderNotifier,
     ChatsService,
+    MenuGridService,
   ],
   exports: [WhatsAppService],
 })
