@@ -43,6 +43,18 @@ const MAX_TEXT_CHARS = 3800;
 const CANCEL_WORDS = ['cancel', 'stop'];
 /** Text that hands the chat to a person (the greeting's footer points here) */
 const STAFF_WORDS = ['help', 'staff', 'agent', 'human', 'talk to staff'];
+/** Filler words ignored when searching the menu ("I need 2 pizzas please") */
+const SEARCH_STOP_WORDS = new Set([
+  'need', 'want', 'like', 'would', 'please', 'plz', 'give', 'some', 'any', 'have', 'you', 'the', 'and', 'for', 'with',
+  'get', 'can', 'order', 'one', 'two', 'three', 'chahiye', 'chaiye', 'hai', 'hain', 'mujhe', 'muje', 'dedo', 'dena',
+  'kya', 'aur', 'wala', 'wali', 'item', 'items', 'food', 'menu', 'show', 'send', 'what', 'mein',
+]);
+/** Everyday words customers use for menu names */
+const SEARCH_ALIASES: Record<string, string> = {
+  coke: 'cola', cold: 'drink', thanda: 'drink', drinks: 'drink', meetha: 'dessert', sweet: 'dessert', sweets: 'dessert',
+  roti: 'naan', chips: 'fries', biriyani: 'biryani', briyani: 'biryani', kabab: 'kebab', kebabs: 'kebab', burgers: 'burger',
+  chiken: 'chicken', zinger: 'fried chicken', broast: 'fried chicken',
+};
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 type FullMenu = Awaited<ReturnType<MenuService['getFullMenu']>>;
@@ -245,11 +257,6 @@ export class ConversationEngine {
     const tappedItem = stripPrefix(input.id, 'buy_') ?? stripPrefix(input.id, 'add_');
     if (tappedItem) {
       const mode = input.id!.startsWith('buy_') ? 'buy' : 'add';
-      if (!s.orderType) {
-        // Ask delivery/pickup first, then carry on with this item
-        s.pendingItem = { id: tappedItem, mode };
-        return this.askOrderType(phone, s);
-      }
       return mode === 'buy' ? this.buyNow(phone, s, tappedItem) : this.handleItemSelection(phone, s, input);
     }
     const customise = stripPrefix(input.id, 'opt_');
@@ -270,12 +277,25 @@ export class ConversationEngine {
     }
     // A category card from the photo menu
     const tappedCategory = input.id?.startsWith('cat_page_') ? null : stripPrefix(input.id, 'cat_');
-    if (tappedCategory && s.state !== ConversationState.MENU_CATEGORY) {
-      if (!s.orderType) {
-        s.pendingItem = { id: tappedCategory, mode: 'category' };
-        return this.askOrderType(phone, s);
-      }
-      return this.sendItemsForCategory(phone, s, tappedCategory);
+    if (tappedCategory && s.state !== ConversationState.MENU_CATEGORY) return this.sendItemsForCategory(phone, s, tappedCategory);
+
+    // Typed food words ("need pizza", "biryani chahiye") jump straight to matching items
+    const browsing = [
+      ConversationState.GREETING, ConversationState.ORDER_TYPE, ConversationState.MENU_CATEGORY,
+      ConversationState.MENU_ITEM, ConversationState.CART,
+    ].includes(s.state);
+    if (input.text && !input.id && browsing && (await this.searchMenu(phone, s, input.text))) return;
+    // Text while picking from the menu that matched nothing: say so rather than repeating the list
+    if (input.text && !input.id && (s.state === ConversationState.MENU_CATEGORY || s.state === ConversationState.MENU_ITEM)) {
+      await this.send(
+        phone,
+        s,
+        buildButtons(phone, `🔎 Sorry, we couldn't find "${truncate(input.text, 40)}" on our menu.\n\nTry a dish like *pizza*, *burger*, *biryani* or *karahi*, or browse the categories.`, [
+          { id: 'cart_add', title: '📂 Categories' },
+          { id: 'action_staff', title: '💬 Talk to Staff' },
+        ]),
+      );
+      return;
     }
 
     switch (s.state) {
@@ -412,8 +432,6 @@ export class ConversationEngine {
   // ─────────────────────────────────────────────────────────────────────────────
 
   private async sendCategoryMenu(phone: string, s: WaSession, page = 0): Promise<void> {
-    if (!s.orderType) return this.askOrderType(phone, s);
-
     const categories = dealsFirst(await this.menu.getFullMenu(s.branchId));
     if (categories.length === 0) {
       await this.send(phone, s, buildText(phone, '😔 Sorry, no menu items are available right now. Please try again later.'));
@@ -545,6 +563,93 @@ export class ConversationEngine {
     messages.push(`${current}\n\n👇 Tap *View Categories* to start ordering.`);
 
     for (const text of messages) await this.send(phone, s, buildText(phone, text));
+  }
+
+  /**
+   * Find dishes or a category from free text. Shows the category, a single item card, or
+   * up to 10 matching items as photo cards. Returns false when nothing matched.
+   */
+  private async searchMenu(phone: string, s: WaSession, text: string): Promise<boolean> {
+    const words = text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .map((w) => SEARCH_ALIASES[w] ?? w)
+      .filter((w) => w.length >= 3 && !SEARCH_STOP_WORDS.has(w));
+    if (words.length === 0) return false;
+
+    const categories = dealsFirst(await this.menu.getFullMenu(s.branchId));
+    // Whole words, plural or not ("pizzas" = Pizza, "cola" = Coca-Cola but not Chocolate);
+    // 4+ letters may also start a word ("biry" → Biryani)
+    const singular = (w: string) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w);
+    const matches = (w: string, x: string) => x === w || singular(x) === singular(w) || (w.length >= 4 && x.startsWith(w) && !/^fried?$/.test(x));
+    const hits = (name: string) => {
+      const n = name.toLowerCase();
+      const nameWords = n.split(/[^a-z0-9]+/);
+      return words.filter((w) => (w.includes(' ') ? n.includes(w) : nameWords.some((x) => matches(w, x)))).length;
+    };
+
+    const items = categories
+      .flatMap((c) => c.items.map((item) => ({ item, category: c, score: hits(item.name) })))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    // A category name ("pizza", "burger", "sandwich") opens the whole category as cards,
+    // unless a dish matches more of the words ("chicken karahi")
+    const category = categories
+      .map((c) => ({ c, score: hits(c.name) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)[0];
+    if (category && category.score >= (items[0]?.score ?? 0)) {
+      await this.sendItemsForCategory(phone, s, category.c.id);
+      return true;
+    }
+    if (items.length === 0) return false;
+    const best = items.filter((x) => x.score === items[0].score).slice(0, CAROUSEL_MAX_CARDS);
+
+    s.state = ConversationState.MENU_ITEM;
+    s.selectedCategoryId = undefined;
+    if (best.length >= 2 && best.every((x) => isPublicImage(x.item.imageUrl))) {
+      const results = { ...best[0].category, name: `Found ${best.length} for "${truncate(text, 30)}"`, items: best.map((x) => x.item) };
+      if (await this.sendItemCarousel(phone, s, results, 0)) return true;
+    }
+    if (best.length === 1 && isPublicImage(best[0].item.imageUrl)) {
+      const { item } = best[0];
+      await this.save(phone, s);
+      const sent = await this.send(
+        phone,
+        s,
+        buildButtons(
+          phone,
+          `*${item.name}*\n${priceText(item)}${item.description ? `\n${truncate(item.description, 300)}` : ''}`,
+          [
+            { id: `buy_${item.id}`, title: '⚡ Buy now' },
+            { id: `add_${item.id}`, title: '➕ Add to cart' },
+            { id: 'back_categories', title: '⬅️ Categories' },
+          ],
+          { imageUrl: item.imageUrl! },
+        ),
+      );
+      if (sent) return true;
+    }
+    // No photos (or WhatsApp refused them): a list to pick from
+    await this.save(phone, s);
+    await this.send(
+      phone,
+      s,
+      buildList(
+        phone,
+        `🔎 Here's what we have for "${truncate(text, 40)}". Tap one to order.`,
+        [{
+          title: 'Results',
+          rows: [
+            ...best.slice(0, 9).map((x) => ({ id: `item_${x.item.id}`, title: truncate(x.item.name, 24), description: truncate(priceText(x.item, false), 72) })),
+            { id: 'back_categories', title: '⬅️ All categories', description: '' },
+          ],
+        }],
+        'View Items',
+      ),
+    );
+    return true;
   }
 
   private async handleCategorySelection(phone: string, s: WaSession, input: Input): Promise<void> {
@@ -936,6 +1041,8 @@ export class ConversationEngine {
 
   private async checkout(phone: string, s: WaSession): Promise<void> {
     if (s.cart.length === 0) return this.showCart(phone, s);
+    // Asked here rather than up front, so browsing and adding never get in the way
+    if (!s.orderType) return this.askOrderType(phone, s);
     if (s.orderType === 'DELIVERY') return this.askAddress(phone, s);
     return this.askTip(phone, s);
   }
@@ -1258,7 +1365,7 @@ export class ConversationEngine {
     await this.send(
       phone,
       s,
-      buildButtons(phone, "🤔 I didn't understand that. Please use the options shown, send *menu* to start again, or talk to our team.", [
+      buildButtons(phone, "🤔 I didn't understand that. Type a dish like *pizza* or *biryani*, send *menu* to see everything, or talk to our team.", [
         { id: 'resume_continue', title: '▶️ Show options' },
         { id: 'action_staff', title: '💬 Talk to Staff' },
       ]),

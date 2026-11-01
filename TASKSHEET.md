@@ -86,6 +86,9 @@
 | 42 | 10 categories, 42 items with options (sizes, portions, spice, drinks) and deal prices | ✅ |
 | 43 | Freely licensed photos (Wikimedia Commons), cropped 4:3, uploaded to Vercel Blob; credits file | ✅ |
 | 44 | Loaded into production through the API; Bacon add-on replaced (halal); Half/Full option icons | ✅ |
+| 45 | Compact photo cards (name + price only) | ✅ |
+| 46 | Categories / category cards no longer ask Delivery or Pickup first; asked at checkout | ✅ |
+| 47 | Typed search: "pizza", "burger", "sandwich" open the category as cards; dishes match by name | ✅ |
 
 ---
 
