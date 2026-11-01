@@ -34,9 +34,10 @@ import { quoteDelivery, ZoneLike } from './delivery-quote';
 
 const MAX_QUANTITY = 20;
 /** Text that always brings the customer back to the main menu (cart is kept) */
-const RESTART_WORDS = ['hi', 'hello', 'hey', 'salam', 'assalam o alaikum', 'aoa', 'menu', 'start', 'order'];
+const RESTART_WORDS = ['hi', 'hello', 'hey', 'salam', 'assalam o alaikum', 'aoa', 'start', 'order'];
 /** Text asking to see the menu itself, e.g. "show me your full menu", "price list" */
-const FULL_MENU_TEXT = /\b(full|whole|complete|entire) menu\b|\bshow\b.*\bmenu\b|\b(price|rate) ?list\b/;
+const FULL_MENU_TEXT =
+  /^menu$|\bmenu\b.*\b(dikhao|dikha|dikhain|dikhayen|dikhaen|bhejo|bhej|bhejein|send|please|plz|chahiye|show)\b|\b(show|send|see|view)\b.*\bmenu\b|\b(full|whole|complete|entire) menu\b|\b(price|rate) ?list\b|kya kya (hai|milta)|khana dikhao/;
 /** WhatsApp text messages are capped at 4096 characters */
 const MAX_TEXT_CHARS = 3800;
 const CANCEL_WORDS = ['cancel', 'stop'];
@@ -248,14 +249,28 @@ export class ConversationEngine {
     }
     const customise = stripPrefix(input.id, 'opt_');
     if (customise) return this.startItemOptions(phone, s, customise);
+    const midOrder =
+      s.state === ConversationState.ITEM_DETAIL || s.state === ConversationState.CART ||
+      s.state === ConversationState.ADDRESS || s.state === ConversationState.TIP ||
+      s.state === ConversationState.PAYMENT;
+    // "View Menu" / "menu dikhao": photo cards to browse and buy from
     if (input.id === 'menu_full' || (input.text && FULL_MENU_TEXT.test(input.text))) {
+      await this.sendVisualMenu(phone, s);
+      return midOrder ? this.prompt(phone, s) : undefined;
+    }
+    // The text price list
+    if (input.id === 'menu_text') {
       await this.sendFullMenu(phone, s);
-      // Ordering starts from the category list; mid-item steps just get their question again
-      return s.state === ConversationState.ITEM_DETAIL || s.state === ConversationState.CART ||
-        s.state === ConversationState.ADDRESS || s.state === ConversationState.TIP ||
-        s.state === ConversationState.PAYMENT
-        ? this.prompt(phone, s)
-        : this.sendCategoryMenu(phone, s);
+      return midOrder ? this.prompt(phone, s) : this.sendCategoryMenu(phone, s);
+    }
+    // A category card from the photo menu
+    const tappedCategory = input.id?.startsWith('cat_page_') ? null : stripPrefix(input.id, 'cat_');
+    if (tappedCategory && s.state !== ConversationState.MENU_CATEGORY) {
+      if (!s.orderType) {
+        s.pendingItem = { id: tappedCategory, mode: 'category' };
+        return this.askOrderType(phone, s);
+      }
+      return this.sendItemsForCategory(phone, s, tappedCategory);
     }
 
     switch (s.state) {
@@ -373,6 +388,7 @@ export class ConversationEngine {
         if (s.pendingItem) {
           const { id, mode } = s.pendingItem;
           s.pendingItem = undefined;
+          if (mode === 'category') return this.sendItemsForCategory(phone, s, id);
           return mode === 'buy'
             ? this.buyNow(phone, s, id)
             : this.handleItemSelection(phone, s, { id: `add_${id}`, text: '', location: null });
@@ -400,10 +416,10 @@ export class ConversationEngine {
     }
 
     // First time in this order: show the whole menu once, so the customer can browse before picking
-    if (!s.fullMenuShown && page === 0) await this.sendFullMenu(phone, s, categories);
+    if (!s.fullMenuShown && page === 0) await this.sendVisualMenu(phone, s, false);
 
     // WhatsApp lists hold 10 rows: categories, then "full menu" and (with items) the cart
-    const extras = [{ id: 'menu_full', title: '📋 Full menu', description: 'All items and prices in one message' }];
+    const extras = [{ id: 'menu_text', title: '📋 Price list', description: 'All items and prices in one message' }];
     if (s.cart.length > 0) {
       extras.push({ id: 'cart_view', title: '🛒 View cart', description: `PKR ${pkr(cartSubtotal(s.cart))}` });
     }
@@ -433,6 +449,59 @@ export class ConversationEngine {
         'Our Menu',
       ),
     );
+  }
+
+  /**
+   * The menu as swipeable photo cards, deals first: every item when they fit in one
+   * carousel (⚡ Buy now / ➕ Add to cart on each), otherwise one card per category.
+   * Falls back to the text menu when there aren't enough photos or WhatsApp refuses.
+   */
+  private async sendVisualMenu(phone: string, s: WaSession, withButtons = true): Promise<void> {
+    const categories = dealsFirst(await this.menu.getFullMenu(s.branchId));
+    s.fullMenuShown = true;
+    const restaurantName = await this.getRestaurantName(s.branchId);
+    const photoItems = categories.flatMap((c) => c.items.filter((i) => isPublicImage(i.imageUrl)));
+    const photoCategories = categories.filter((c) => c.items.some((i) => isPublicImage(i.imageUrl)));
+
+    let carousel: ReturnType<typeof buildCarousel> | null = null;
+    if (photoItems.length >= 2 && photoItems.length <= CAROUSEL_MAX_CARDS) {
+      carousel = buildCarousel(
+        phone,
+        `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and tap *⚡ Buy now* or *➕ Add to cart*.`,
+        photoItems.map((item) => ({
+          imageUrl: item.imageUrl!,
+          text: `*${item.name}*\n${priceText(item)}${item.description ? `\n${truncate(item.description, 80)}` : ''}`,
+          buttons: [
+            { id: `buy_${item.id}`, title: '⚡ Buy now' },
+            { id: `add_${item.id}`, title: '➕ Add to cart' },
+          ],
+        })),
+      );
+    } else if (photoCategories.length >= 2) {
+      carousel = buildCarousel(
+        phone,
+        `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and open a category.`,
+        photoCategories.slice(0, CAROUSEL_MAX_CARDS).map((c) => ({
+          imageUrl: c.items.find((i) => isPublicImage(i.imageUrl))!.imageUrl!,
+          text: `${isDealCategory(c.name) ? '🔥' : categoryEmoji(c.name)} *${c.name}*\n${c.items.length} item${c.items.length !== 1 ? 's' : ''} · from PKR ${pkr(Math.min(...c.items.map((i) => i.price)))}`,
+          buttons: [{ id: `cat_${c.id}`, title: '👀 See items' }],
+        })),
+      );
+    }
+
+    await this.save(phone, s);
+    if (!carousel || !(await this.send(phone, s, carousel))) {
+      if (carousel) this.logger.warn('Photo menu was refused; sending the text menu instead');
+      return this.sendFullMenu(phone, s, categories);
+    }
+    if (!withButtons) return;
+
+    const buttons = [
+      { id: 'cart_add', title: '📂 Categories' },
+      { id: 'menu_text', title: '📋 Price list' },
+    ];
+    if (s.cart.length > 0) buttons.push({ id: 'cart_view', title: '🛒 View cart' });
+    await this.send(phone, s, buildButtons(phone, 'Or browse by category, or see every price in one list:', buttons));
   }
 
   /** The whole menu as formatted text: categories, items, prices, short descriptions */

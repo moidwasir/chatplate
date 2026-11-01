@@ -40,7 +40,7 @@ export interface WaSession {
   /** The formatted full menu has been sent during this order */
   fullMenuShown?: boolean;
   /** Item tapped (Buy now / Add) before delivery or pickup was chosen; picked up afterwards */
-  pendingItem?: { id: string; mode: 'add' | 'buy' };
+  pendingItem?: { id: string; mode: 'add' | 'buy' | 'category' };
   draft?: ItemDraft;
   promoCode?: string;
   deliveryAddressId?: string;
