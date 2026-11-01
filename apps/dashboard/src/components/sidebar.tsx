@@ -29,7 +29,7 @@ const NAV: NavItem[] = [
   { href: '/orders', label: 'Orders', icon: ShoppingBag },
   { href: '/chats', label: 'WhatsApp chats', icon: MessageCircle, soon: 'Phase 2' },
   { href: '/customers', label: 'Customers', icon: Users, soon: 'Phase 2' },
-  { href: '/delivery', label: 'Delivery', icon: Bike, soon: 'Phase 5' },
+  { href: '/delivery', label: 'Delivery', icon: Bike },
   { href: '/reports', label: 'Reports', icon: BarChart3, soon: 'Phase 5' },
   { href: '/settings', label: 'Settings', icon: Settings, soon: 'Later' },
 ];

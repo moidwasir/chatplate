@@ -1015,10 +1015,15 @@ export class ConversationEngine {
     const quote = quoteDelivery(zones as ZoneLike[], lat, lng, subtotal, { lat: branch?.lat ?? null, lng: branch?.lng ?? null });
 
     if (!quote.ok && quote.reason === 'OUT_OF_ZONE') {
+      const reach = Math.max(0, ...zones.filter((z) => z.polygon == null).map((z) => z.maxDistance ?? 0));
+      const distance =
+        quote.distanceKm != null && reach > 0
+          ? `\n\nThat pin is ${quote.distanceKm.toFixed(1)} km from us and we deliver up to ${reach} km.`
+          : '';
       await this.send(
         phone,
         s,
-        buildButtons(phone, "😔 Sorry, that location is outside our delivery area.\n\nYou can pick the order up from us instead, or send a different location.", [
+        buildButtons(phone, `😔 Sorry, that location is outside our delivery area.${distance}\n\nYou can pick the order up from us instead, or send a different location.`, [
           { id: 'type_pickup', title: '🏃 Switch to Pickup' },
           { id: 'addr_new', title: '📍 Other location' },
         ]),

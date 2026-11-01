@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -55,10 +55,8 @@ async function main() {
       id: 'seed-zone-001',
       branchId: branch.id,
       name: 'City Zone',
-      polygon: {
-        type: 'Polygon',
-        coordinates: [[[74.30, 31.50], [74.42, 31.50], [74.42, 31.55], [74.30, 31.55], [74.30, 31.50]]],
-      },
+      polygon: Prisma.DbNull, // a circle around the branch; change it on the dashboard Delivery page
+      maxDistance: 8, // km
       feeType: 'FLAT',
       flatFee: 8000, // PKR 80 delivery fee
       minOrder: 50000, // PKR 500 minimum order

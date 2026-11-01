@@ -4,7 +4,8 @@
 export interface ZoneLike {
   id: string;
   name: string;
-  polygon: unknown; // GeoJSON Polygon: { type: 'Polygon', coordinates: [[[lng, lat], ...]] }
+  /** GeoJSON Polygon { type: 'Polygon', coordinates: [[[lng, lat], ...]] }; null = within maxDistance km of the branch */
+  polygon: unknown;
   feeType: 'FLAT' | 'PER_KM' | 'FREE_ABOVE';
   flatFee: number | null;
   perKmFee: number | null;
@@ -15,7 +16,7 @@ export interface ZoneLike {
 
 export type DeliveryQuote =
   | { ok: true; zone: ZoneLike; fee: number; distanceKm: number | null }
-  | { ok: false; reason: 'OUT_OF_ZONE' }
+  | { ok: false; reason: 'OUT_OF_ZONE'; distanceKm: number | null }
   | { ok: false; reason: 'BELOW_MINIMUM'; zone: ZoneLike; minOrder: number };
 
 /**
@@ -33,12 +34,17 @@ export function quoteDelivery(
   const distanceKm =
     branch.lat != null && branch.lng != null ? haversineKm(branch.lat, branch.lng, lat, lng) : null;
 
-  const zone = zones.find(
-    (z) =>
-      pointInPolygon(lng, lat, z.polygon) &&
-      (z.maxDistance == null || distanceKm == null || distanceKm <= z.maxDistance),
+  // Drawn areas first, then radius zones from the smallest circle out (so "0–5 km" wins over "0–10 km")
+  const ordered = [
+    ...zones.filter((z) => z.polygon != null),
+    ...zones.filter((z) => z.polygon == null).sort((a, b) => (a.maxDistance ?? Infinity) - (b.maxDistance ?? Infinity)),
+  ];
+  const zone = ordered.find((z) =>
+    z.polygon == null
+      ? z.maxDistance != null && distanceKm != null && distanceKm <= z.maxDistance
+      : pointInPolygon(lng, lat, z.polygon) && (z.maxDistance == null || distanceKm == null || distanceKm <= z.maxDistance),
   );
-  if (!zone) return { ok: false, reason: 'OUT_OF_ZONE' };
+  if (!zone) return { ok: false, reason: 'OUT_OF_ZONE', distanceKm };
   if (subtotal < zone.minOrder) return { ok: false, reason: 'BELOW_MINIMUM', zone, minOrder: zone.minOrder };
 
   let fee: number;

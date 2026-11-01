@@ -69,7 +69,7 @@ model DeliveryZone {
   branchId    String
   branch      Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
   name        String
-  polygon     Json            // GeoJSON polygon [[[lng,lat],...]]
+  polygon     Json?           // GeoJSON polygon [[[lng,lat],...]]; empty = a circle of maxDistance km around the branch
   feeType     DeliveryFeeType
   flatFee     Int?            // paisa
   perKmFee    Int?            // paisa per km
