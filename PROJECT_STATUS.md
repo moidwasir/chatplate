@@ -2,7 +2,7 @@
 
 > **Product:** ChatPlate, WhatsApp ordering for restaurants (*Your restaurant, on WhatsApp*)
 > **First client:** Safi Food & Beverage (restaurant data in the database is still "Safi Restaurant")
-> **Last updated:** Nov 1, 2026 (Phase 2 session, live on Vercel + Meta test number, Delivery page)
+> **Last updated:** Nov 1, 2026 (Phase 2 session: live on Vercel + Meta test number; every dashboard page is now built)
 > **Current phase:** Phase 2 (WhatsApp engine): customers order by chat (COD), staff accept and progress orders on the dashboard, and the customer gets a WhatsApp message at every step. Phase 1 leftovers still open
 > **Roadmap / checkboxes:** [TASKSHEET.md](./TASKSHEET.md)
 
@@ -207,6 +207,25 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | PATCH | `/delivery/zones/:id` | Same fields, all optional. Sending `radiusKm` turns a drawn-shape zone into a radius zone |
 | DELETE | `/delivery/zones/:id` | |
 
+### Chats (OWNER/MANAGER/CASHIER)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/chats?branchId=&q=&handledBy=BOT\|HUMAN` | One row per customer (latest conversation), newest first, max 100: last message preview, `handledBy`, `waitingForStaff` (staff handling and customer spoke last). Plus `humanCount` |
+| GET | `/chats/:customerId?branchId=` | Last 200 messages across the customer's conversations, made readable (text, tapped button, buttons offered, image, location, carousel summary, `staffName` for dashboard replies), `windowOpen` / `windowEndsAt` (Meta's 24 h rule), order count |
+| POST | `/chats/:customerId/reply` | `{ branchId, text }`: sends as free-form text, marks it with the staff name, and **takes the chat over** (conversation + Redis session → HUMAN_HANDOVER, so the bot stays quiet). 502 when Meta refuses (usually the 24 h window) |
+| POST | `/chats/:customerId/handler` | `{ branchId, handledBy }`: take over, or hand back to the bot (the customer gets "Type *menu* anytime to order") |
+
+### Customers (OWNER/MANAGER)
+`GET /customers?branchId=&q=&page=&pageSize=` (customers who ordered from or chatted with the branch, with order count, spend excluding cancelled, last order) · `GET /customers/:id?branchId=` (addresses, last 30 orders, notes with author names) · `PATCH /customers/:id` `{ name?, isBlocked? }` · `POST /customers/:id/notes` · `DELETE /customers/:id/notes/:noteId`
+
+### Reports (OWNER/MANAGER)
+`GET /reports/sales?branchId=&from=&to=` (≤ 366 days): totals (sales **net of tips**, orders, average, cancelled, customers, tips, delivery fees), `byDay` and `byHour` in restaurant time, `byType`, `bySource`, top 10 items by quantity
+
+### Settings (OWNER/MANAGER)
+`GET /settings?branchId=` · `PATCH /settings/restaurant?branchId=` `{ name?, taxPercent? }` (owner only; 1700 = 17%) · `PATCH /settings/branch/:id` `{ name?, address?, phone? }` · `PUT /settings/branch/:id/hours` `{ hours: [{ dayOfWeek, openTime, closeTime, isClosed }] }`
+
+`POST /auth/change-password` `{ currentPassword, newPassword }`: signs out every session and returns a fresh token pair for the caller (wrong current password → 400, not 401)
+
 ### Other
 `GET /health` · `GET /webhooks/whatsapp` (Meta verify challenge) · `POST /webhooks/whatsapp` (messages + delivery statuses, processed within the request; 401 on a bad signature, 5xx if processing fails so Meta retries) · Swagger UI at `/docs` (non-production) · uploaded files at `/uploads/*` (local storage mode)
 
@@ -222,8 +241,12 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
 | Order panel | Click any order (board, list or Overview) → right-hand panel: step-by-step progress with times, actions, customer (call, open WhatsApp chat, map link), items with options and prices, totals, payment, history with who did each step. Updates live |
 | `/menu` Menu Manager | Categories (add/rename/hide/reorder/delete); items (price, Urdu name, description, serving hours, visibility, in-stock toggle, photo); option groups and options with extra prices |
 | `/delivery` Delivery | **Restaurant location** (use my current location, or paste coordinates / a Google Maps link; "Check on map") and **delivery zones**: name, deliver up to N km, flat fee or per-km fee, minimum order, free delivery above, on/off, edit, delete. Warns when no zone is active. Zones from the old fixed shape are marked "Drawn area" and become radius zones when edited |
+| `/chats` WhatsApp chats | List (search, All / With staff with a count, orange dot = customer waiting for staff), thread with bot/staff labels, tapped buttons, photos, locations, delivery ticks; reply box (Enter sends) that takes the chat over; Take over / Hand back to bot; 24 h warning. Polls every 5 s. Link via `?c=<customerId>` |
+| `/customers` Customers | Table (name, phone, orders, spend, last order, first seen), search, paging; side panel: rename, chat / WhatsApp links, totals, orders (click → order panel), saved addresses with map links, staff notes, block/unblock |
+| `/reports` Reports | Today / 7 / 30 / 90 days: sales, orders, average, customers; sales-by-day and busiest-hours bar charts with hover tooltips; top items table; delivery vs pickup and order sources |
+| `/settings` Settings | Restaurant name + sales tax (owner only), branch name/phone/address, opening hours per day (closed toggle, copy to all days, past-midnight hours), change password |
 | Top bar | Branch switcher (multi-branch users), **API** and **Live updates** status dots, 🔔 new-order sound toggle, sign out. Every page plays a chime and shows a pop-up for a new order (sound works after the first click on the page, a browser rule) |
-| Sidebar | Chats, Customers, Reports, Settings are shown as "Soon" with their phase |
+| Sidebar | Every link works; nothing is marked "Soon" any more |
 
 ---
 
@@ -346,6 +369,7 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
   - Dashboard TypeScript compiles; `/orders`, `/orders?view=all&range=7d` and `/` load (200).
 - **Live on Meta + Vercel (Nov 1):** real order placed from a phone through the test number; status messages arrived; carousel with photo cards verified (cards need `"type":"button"`; Unsplash photos load, Wikimedia ones were refused); handover exit works; 60-day token checked against the test number (CONNECTED).
 - **Delivery page (Nov 1):** API and dashboard compile; radius quoting checked (3 km zone beats 10 km for a close pin, 10 km for a farther one, out-of-zone returns the distance 31.1 km, no restaurant pin → out); `/v1/delivery` 401 without login; `/delivery` page 200 after deploy. Not yet clicked through in a browser.
+- **Chats / Customers / Reports / Settings (Nov 1, local API + dev DB):** chat list (20 chats, 2 with staff) and thread rendering (buttons offered, taps shown as 👆); staff reply sent, labelled "Safi Owner", chat switched to HUMAN; hand back → BOT; customers list + detail + note; report for October: 5 orders, sales net of tips, top items, busy hours 9/10/12; settings read, bad time rejected (400), tax update; delivery zone create / missing per-km fee rejected / delete; change password: wrong current → 400, change works, old password then fails, restored. Dashboard builds; all pages return 200 on Vercel; new API routes return 401 without login.
 - **Not yet verified:**
   - Clicking through the dashboard in a real browser end to end (board, list, filters, order panel, chime, pop-up).
   - Menu paging with a real-sized menu (seed has 2 items).
@@ -368,14 +392,15 @@ Serving hours are `"HH:MM"`. Set both or neither. Overnight windows such as `22:
    - approved WhatsApp templates for status updates sent after the 24 h window;
    - record COD cash as collected when an order is delivered (issue #12);
    - assign a rider from the order panel.
-3. **Delivery setup (owner, now):** on the dashboard **Delivery** page, set the restaurant location and edit "City Zone" to the real radius and fee; production still has the old fixed Lahore rectangle until then, which rejects most pins.
+3. **Dashboard follow-ups:** sidebar badge for chats waiting on staff; staff accounts screen (add manager/cashier, reset PIN); photo/voice messages from customers shown in chats (stored, not downloaded yet); CSV export on Reports.
+4. **Delivery setup (owner, now):** on the dashboard **Delivery** page, set the restaurant location and edit "City Zone" to the real radius and fee; production still has the old fixed Lahore rectangle until then, which rejects most pins.
    - later: draw zones on a map; test a pin from the page.
-4. **AI ordering:** understand free text like "I want a chicken burger and a coke" and fill the cart (LLM + menu matching), falling back to the buttons.
-5. **Phase 1 leftovers:**
+5. **AI ordering:** understand free text like "I want a chicken burger and a coke" and fill the cart (LLM + menu matching), falling back to the buttons.
+6. **Phase 1 leftovers:**
    - scaffold `apps/pos`, `apps/kds`, `apps/rider`;
    - ESLint config;
    - staging VPS + SSL (needs Hostinger access).
-6. **Waiting on the restaurant / owner:**
+7. **Waiting on the restaurant / owner:**
    - SIM for +92 304 5945496 to re-verify and register it, then switch production off the test number;
    - rotate the Meta secrets shared during setup;
    - Meta Business verification and WhatsApp number (then we can test with real messages);
