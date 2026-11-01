@@ -475,7 +475,7 @@ export class ConversationEngine {
         `🍽️ *${restaurantName}: our menu*\nSwipe 👉 and tap *⚡ Buy now* or *➕ Add to cart*.`,
         photoItems.map((item) => ({
           imageUrl: item.imageUrl!,
-          text: `*${item.name}*\n${priceText(item)}${item.description ? `\n${truncate(item.description, 80)}` : ''}`,
+          text: cardText(item),
           buttons: [
             { id: `buy_${item.id}`, title: '⚡ Buy now' },
             { id: `add_${item.id}`, title: '➕ Add to cart' },
@@ -647,7 +647,7 @@ export class ConversationEngine {
         `${categoryEmoji(category.name)} *${category.name}*${pages > 1 ? ` (${current + 1}/${pages})` : ''}\nSwipe to see everything 👉`,
         items.map((item) => ({
           imageUrl: item.imageUrl!,
-          text: `*${item.name}*\n${priceText(item)}${item.description ? `\n${truncate(item.description, 80)}` : ''}`,
+          text: cardText(item),
           buttons: [
             { id: `buy_${item.id}`, title: '⚡ Buy now' },
             { id: `add_${item.id}`, title: '➕ Add to cart' },
@@ -1420,6 +1420,12 @@ function saving(item: { price: number; compareAtPrice?: number | null }): number
 }
 
 /** "PKR 750", or for a deal "~PKR 2,050~ *PKR 1,650* · save 400" (WhatsApp formatting optional) */
+/** Photo-card caption kept to two short lines so cards stay compact: name, then price (deal: ~2,050~ *Rs 1,650* 🔥) */
+function cardText(item: { name: string; price: number; compareAtPrice?: number | null }): string {
+  const price = saving(item) ? `~${pkr(item.compareAtPrice!)}~ *Rs ${pkr(item.price)}* 🔥` : `Rs ${pkr(item.price)}`;
+  return `*${item.name}*\n${price}`;
+}
+
 function priceText(item: { price: number; compareAtPrice?: number | null }, formatted = true): string {
   const off = saving(item);
   if (!off) return `PKR ${pkr(item.price)}`;
